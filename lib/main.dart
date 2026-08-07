@@ -246,6 +246,54 @@ void showAppMessage(
     );
 }
 
+Widget mobileScannerErrorBuilder(
+  BuildContext context,
+  MobileScannerException error,
+  Widget? child,
+) {
+  final details = error.errorDetails?.message?.trim();
+  final message = [
+    error.errorCode.message,
+    if (details != null && details.isNotEmpty) details,
+  ].where((value) => value.trim().isNotEmpty).join('\n');
+
+  return ColoredBox(
+    color: Colors.black,
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline_rounded, color: Colors.white),
+            const SizedBox(height: 10),
+            const Text(
+              'No se pudo iniciar la camara.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            if (message.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class AppToastMessage extends StatelessWidget {
   const AppToastMessage({
     required this.message,
@@ -9439,7 +9487,7 @@ class VinetaSeguimientoPage extends StatefulWidget {
 class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
   final _formKey = GlobalKey<FormState>();
   final _vinetaIdController = TextEditingController();
-  final _scannerController = MobileScannerController();
+  final _scannerController = MobileScannerController(autoStart: false);
   bool _loading = false;
   bool _scannerOpen = false;
   bool _processingScan = false;
@@ -9752,7 +9800,11 @@ class VinetaSeguimientoInlineScanner extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            MobileScanner(controller: controller, onDetect: onDetect),
+            MobileScanner(
+              controller: controller,
+              onDetect: onDetect,
+              errorBuilder: mobileScannerErrorBuilder,
+            ),
             DecoratedBox(
               decoration: BoxDecoration(
                 border: Border.all(color: palette.accent, width: 2.4),
@@ -10394,7 +10446,11 @@ class _VinetaScannerPageState extends State<VinetaScannerPage> {
       ),
       body: Stack(
         children: [
-          MobileScanner(controller: _controller, onDetect: _handleDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _handleDetect,
+            errorBuilder: mobileScannerErrorBuilder,
+          ),
           Align(
             alignment: Alignment.center,
             child: Container(
@@ -10558,7 +10614,11 @@ class _EmployeeScannerPageState extends State<EmployeeScannerPage> {
       ),
       body: Stack(
         children: [
-          MobileScanner(controller: _controller, onDetect: _handleDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _handleDetect,
+            errorBuilder: mobileScannerErrorBuilder,
+          ),
           Align(
             alignment: Alignment.center,
             child: Container(
@@ -11051,7 +11111,9 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   final _employeeCodeController = TextEditingController();
   final _quantityController = TextEditingController();
   final _hoursController = TextEditingController();
-  MobileScannerController _cameraController = MobileScannerController();
+  MobileScannerController _cameraController = MobileScannerController(
+    autoStart: false,
+  );
   Key _cameraViewKey = UniqueKey();
 
   late DateTime _scanDateTime;
@@ -11275,7 +11337,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     }
 
     setState(() {
-      _cameraController = MobileScannerController();
+      _cameraController = MobileScannerController(autoStart: false);
       _cameraViewKey = UniqueKey();
       _cameraPreparing = false;
     });
@@ -12373,6 +12435,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                               key: _cameraViewKey,
                               controller: _cameraController,
                               onDetect: _handleDetect,
+                              errorBuilder: mobileScannerErrorBuilder,
                             ),
                           Align(
                             alignment: Alignment.center,
