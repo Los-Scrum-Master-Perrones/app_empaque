@@ -27,6 +27,13 @@ const serverUrlStorageKey = 'server_url';
 const secureStorage = FlutterSecureStorage();
 final appNavigatorKey = GlobalKey<NavigatorState>();
 
+MobileScannerController createQrScannerController({bool autoStart = true}) {
+  return MobileScannerController(
+    autoStart: autoStart,
+    formats: const [BarcodeFormat.qrCode],
+  );
+}
+
 Uri _normalizeApiBaseUri(String value) {
   var normalizedValue = value.trim();
 
@@ -9487,7 +9494,7 @@ class VinetaSeguimientoPage extends StatefulWidget {
 class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
   final _formKey = GlobalKey<FormState>();
   final _vinetaIdController = TextEditingController();
-  final _scannerController = MobileScannerController(autoStart: false);
+  final _scannerController = createQrScannerController(autoStart: false);
   bool _loading = false;
   bool _scannerOpen = false;
   bool _processingScan = false;
@@ -10356,7 +10363,7 @@ class VinetaScannerPage extends StatefulWidget {
 }
 
 class _VinetaScannerPageState extends State<VinetaScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
+  final MobileScannerController _controller = createQrScannerController();
   bool _processing = false;
   String? _error;
 
@@ -10529,7 +10536,7 @@ class EmployeeScannerPage extends StatefulWidget {
 }
 
 class _EmployeeScannerPageState extends State<EmployeeScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
+  final MobileScannerController _controller = createQrScannerController();
   bool _processing = false;
   String? _error;
 
@@ -11111,7 +11118,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   final _employeeCodeController = TextEditingController();
   final _quantityController = TextEditingController();
   final _hoursController = TextEditingController();
-  MobileScannerController _cameraController = MobileScannerController(
+  MobileScannerController _cameraController = createQrScannerController(
     autoStart: false,
   );
   Key _cameraViewKey = UniqueKey();
@@ -11337,7 +11344,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     }
 
     setState(() {
-      _cameraController = MobileScannerController(autoStart: false);
+      _cameraController = createQrScannerController(autoStart: false);
       _cameraViewKey = UniqueKey();
       _cameraPreparing = false;
     });
