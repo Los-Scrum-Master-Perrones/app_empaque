@@ -9,11 +9,16 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+const appVersionName = '1.0.0';
+const appBuildNumber = 15;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://192.168.2.7:8081/api',
+  defaultValue: 'http://192.168.0.7:8000/api',
 );
 
 Uri _apiBaseUri = _normalizeApiBaseUri(apiBaseUrl);
@@ -546,6 +551,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
         _initializing = false;
       });
 
+      unawaited(fetchAppUpdateInfo());
       return;
     }
 
@@ -561,6 +567,8 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
         _user = user;
         _initializing = false;
       });
+
+      unawaited(fetchAppUpdateInfo());
     } catch (_) {
       await secureStorage.delete(key: 'auth_token');
       await minimumSplashDuration;
@@ -571,6 +579,8 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
         _darkMode = darkMode;
         _initializing = false;
       });
+
+      unawaited(fetchAppUpdateInfo());
     }
   }
 
@@ -1308,9 +1318,16 @@ class _LoginPageState extends State<LoginPage> {
             top: 12,
             right: 12,
             child: SafeArea(
-              child: ThemeToggleButton(
-                isDarkMode: widget.isDarkMode,
-                onPressed: widget.onToggleTheme,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const AppNotificationButton(),
+                  const SizedBox(width: 4),
+                  ThemeToggleButton(
+                    isDarkMode: widget.isDarkMode,
+                    onPressed: widget.onToggleTheme,
+                  ),
+                ],
               ),
             ),
           ),
@@ -1668,6 +1685,592 @@ class LoginLoadingOverlay extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class AppUpdateInfo {
+  const AppUpdateInfo({
+    required this.latestVersionName,
+    required this.latestVersionCode,
+    required this.currentVersionName,
+    required this.currentVersionCode,
+    required this.releaseNotes,
+    required this.downloadUrl,
+    required this.hasUpdate,
+    this.splitApks = const {},
+    this.forceUpdate = false,
+    this.publishedAt,
+  });
+
+  final String latestVersionName;
+  final int latestVersionCode;
+  final String currentVersionName;
+  final int currentVersionCode;
+  final String releaseNotes;
+  final String downloadUrl;
+  final bool hasUpdate;
+  final Map<String, String> splitApks;
+  final bool forceUpdate;
+  final String? publishedAt;
+
+  factory AppUpdateInfo.fromJson({
+    required Map<String, dynamic> json,
+    required String currentVersionName,
+    required int currentVersionCode,
+  }) {
+    final latestCode =
+        (json['version_code'] as num?)?.toInt() ?? currentVersionCode;
+    final latestName =
+        (json['version_name'] as String?)?.trim() ?? currentVersionName;
+    final downloadUrl = (json['download_url'] as String?)?.trim() ?? '';
+    final notes = (json['release_notes'] as String?)?.trim() ??
+        'Nueva versión disponible.';
+    final force = json['force_update'] == true;
+    final published = json['published_at'] as String?;
+
+    final splitRaw = json['split_apks'] as Map<String, dynamic>? ?? {};
+    final splitMap = <String, String>{};
+    splitRaw.forEach((key, value) {
+      if (value != null && value.toString().trim().isNotEmpty) {
+        splitMap[key] = value.toString().trim();
+      }
+    });
+
+    final hasUpdate = latestCode > currentVersionCode;
+
+    return AppUpdateInfo(
+      latestVersionName: latestName,
+      latestVersionCode: latestCode,
+      currentVersionName: currentVersionName,
+      currentVersionCode: currentVersionCode,
+      releaseNotes: notes,
+      downloadUrl: downloadUrl,
+      hasUpdate: hasUpdate,
+      splitApks: splitMap,
+      forceUpdate: force,
+      publishedAt: published,
+    );
+  }
+}
+
+final appUpdateNotifier = ValueNotifier<AppUpdateInfo?>(null);
+
+Future<AppUpdateInfo?> fetchAppUpdateInfo({http.Client? client}) async {
+  final httpClient = client ?? http.Client();
+  try {
+    final response = await httpClient
+        .get(apiUri('app-update'))
+        .timeout(const Duration(seconds: 8));
+
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      final data = (decoded is Map<String, dynamic> &&
+              decoded['data'] is Map<String, dynamic>)
+          ? decoded['data'] as Map<String, dynamic>
+          : (decoded is Map<String, dynamic> ? decoded : <String, dynamic>{});
+
+      final info = AppUpdateInfo.fromJson(
+        json: data,
+        currentVersionName: appVersionName,
+        currentVersionCode: appBuildNumber,
+      );
+
+      appUpdateNotifier.value = info;
+      return info;
+    }
+  } catch (e) {
+    debugPrint('Error al verificar actualización: $e');
+  } finally {
+    if (client == null) httpClient.close();
+  }
+  return null;
+}
+
+Future<void> openDownloadUrl(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null) {
+    if (context.mounted) {
+      showAppMessage(context, 'URL de descarga inválida.');
+    }
+    return;
+  }
+
+  try {
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!launched && context.mounted) {
+      showAppMessage(context, 'No se pudo abrir el navegador para descargar.');
+    }
+  } catch (e) {
+    if (context.mounted) {
+      showAppMessage(context, 'Error al abrir la descarga: $e');
+    }
+  }
+}
+
+void showAppNotificationSheet({
+  required BuildContext context,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: appPalette(context).surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+    ),
+    builder: (sheetContext) {
+      return const _AppNotificationSheetContent();
+    },
+  );
+}
+
+class _AppNotificationSheetContent extends StatefulWidget {
+  const _AppNotificationSheetContent();
+
+  @override
+  State<_AppNotificationSheetContent> createState() =>
+      _AppNotificationSheetContentState();
+}
+
+class _AppNotificationSheetContentState
+    extends State<_AppNotificationSheetContent> {
+  bool _loading = false;
+  bool _downloading = false;
+  double _progress = 0.0;
+  int _downloadedBytes = 0;
+  int _totalBytes = 0;
+  String? _downloadError;
+  String? _downloadedFilePath;
+
+  @override
+  void initState() {
+    super.initState();
+    if (appUpdateNotifier.value == null) {
+      _checkNow();
+    }
+  }
+
+  Future<void> _checkNow() async {
+    if (_loading || _downloading) return;
+    setState(() => _loading = true);
+    await fetchAppUpdateInfo();
+    if (mounted) {
+      setState(() => _loading = false);
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0.0 MB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _startInAppUpdate(String url) async {
+    if (_downloading) return;
+    setState(() {
+      _downloading = true;
+      _progress = 0.0;
+      _downloadedBytes = 0;
+      _totalBytes = 0;
+      _downloadError = null;
+      _downloadedFilePath = null;
+    });
+
+    try {
+      final uri = Uri.parse(url);
+      final client = http.Client();
+      final request = http.Request('GET', uri);
+      final response = await client.send(request);
+
+      if (response.statusCode != 200) {
+        throw Exception(
+          'El servidor respondió con código HTTP ${response.statusCode}',
+        );
+      }
+
+      final total = response.contentLength ?? 0;
+      final tempDir = await getTemporaryDirectory();
+      final apkFile = File('${tempDir.path}/app_update_arm64.apk');
+
+      if (await apkFile.exists()) {
+        try {
+          await apkFile.delete();
+        } catch (_) {}
+      }
+
+      final sink = apkFile.openWrite();
+      int received = 0;
+
+      await for (final chunk in response.stream) {
+        received += chunk.length;
+        sink.add(chunk);
+        if (mounted) {
+          setState(() {
+            _downloadedBytes = received;
+            _totalBytes = total;
+            _progress = total > 0 ? (received / total).clamp(0.0, 1.0) : 0.0;
+          });
+        }
+      }
+
+      await sink.flush();
+      await sink.close();
+
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _downloadedFilePath = apkFile.path;
+        });
+      }
+
+      // Abrir instalador de inmediato
+      await _installApk(apkFile.path);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _downloadError = 'Error de descarga: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _installApk(String filePath) async {
+    try {
+      final result = await OpenFilex.open(
+        filePath,
+        type: 'application/vnd.android.package-archive',
+      );
+      if (result.type != ResultType.done && mounted) {
+        showAppMessage(
+          context,
+          'Abre el archivo descargado para instalar: ${result.message}',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppMessage(context, 'No se pudo abrir el instalador: $e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return ValueListenableBuilder<AppUpdateInfo?>(
+      valueListenable: appUpdateNotifier,
+      builder: (context, update, _) {
+        final hasUpdate = update?.hasUpdate ?? false;
+        final targetUrl = update != null
+            ? (update.splitApks['arm64-v8a'] ??
+                (update.downloadUrl.isNotEmpty ? update.downloadUrl : ''))
+            : '';
+
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            8,
+            20,
+            MediaQuery.of(context).padding.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Encabezado
+              Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: hasUpdate
+                          ? palette.primary.withValues(alpha: 0.15)
+                          : (palette.isDark
+                              ? const Color(0xFF064E3B)
+                              : const Color(0xFFECFDF5)),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(
+                      hasUpdate
+                          ? Icons.system_update_rounded
+                          : Icons.check_circle_outline_rounded,
+                      color: hasUpdate
+                          ? palette.primary
+                          : (palette.isDark
+                              ? const Color(0xFF34D399)
+                              : const Color(0xFF059669)),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          hasUpdate
+                              ? 'Actualización disponible'
+                              : 'Aplicación actualizada',
+                          style: TextStyle(
+                            color: palette.text,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          hasUpdate
+                              ? 'Nueva versión v${update?.latestVersionName} (Build ${update?.latestVersionCode})'
+                              : 'Versión instalada: v$appVersionName (Build $appBuildNumber)',
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Comprobar actualizaciones',
+                    onPressed: (_loading || _downloading) ? null : _checkNow,
+                    icon: _loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : Icon(Icons.refresh_rounded, color: palette.muted),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+
+              if (hasUpdate && update != null) ...[
+                if (_downloading) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: palette.surface,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: palette.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Descargando APK Arm64...',
+                              style: TextStyle(
+                                color: palette.text,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              '${(_progress * 100).toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                color: palette.primary,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(99),
+                          child: LinearProgressIndicator(
+                            value: _totalBytes > 0 ? _progress : null,
+                            minHeight: 8,
+                            backgroundColor: palette.isDark
+                                ? const Color(0xFF1E293B)
+                                : const Color(0xFFE2E8F0),
+                            color: palette.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _totalBytes > 0
+                              ? '${_formatBytes(_downloadedBytes)} de ${_formatBytes(_totalBytes)}'
+                              : '${_formatBytes(_downloadedBytes)} descargados...',
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (_downloadedFilePath != null) ...[
+                  FilledButton.icon(
+                    icon: const Icon(Icons.install_mobile_rounded, size: 20),
+                    label: const Text('Instalar Actualización'),
+                    onPressed: () => _installApk(_downloadedFilePath!),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Descargar de nuevo'),
+                    onPressed: targetUrl.isEmpty
+                        ? null
+                        : () => _startInAppUpdate(targetUrl),
+                  ),
+                ] else ...[
+                  if (_downloadError != null) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.red.withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Text(
+                        _downloadError!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                  FilledButton.icon(
+                    icon: const Icon(Icons.download_rounded, size: 20),
+                    label: const Text('Descargar e Instalar'),
+                    onPressed: targetUrl.isEmpty
+                        ? null
+                        : () => _startInAppUpdate(targetUrl),
+                  ),
+                ],
+              ] else ...[
+                // Estado al día
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                  decoration: BoxDecoration(
+                    color: palette.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: palette.border),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.verified_rounded,
+                        color: palette.isDark
+                            ? const Color(0xFF34D399)
+                            : const Color(0xFF059669),
+                        size: 40,
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '¡Tienes la versión más reciente!',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: palette.text,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'No hay actualizaciones pendientes en el servidor.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class AppNotificationButton extends StatelessWidget {
+  const AppNotificationButton({
+    this.compact = false,
+    super.key,
+  });
+
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return ValueListenableBuilder<AppUpdateInfo?>(
+      valueListenable: appUpdateNotifier,
+      builder: (context, update, _) {
+        final hasUpdate = update?.hasUpdate ?? false;
+
+        return Stack(
+          alignment: Alignment.center,
+          clipBehavior: Clip.none,
+          children: [
+            IconButton(
+              tooltip: hasUpdate
+                  ? '¡Actualización disponible!'
+                  : 'Notificaciones y actualizaciones',
+              onPressed: () => showAppNotificationSheet(context: context),
+              icon: Icon(
+                hasUpdate
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_none_rounded,
+                color: hasUpdate
+                    ? (palette.isDark
+                        ? const Color(0xFF38BDF8)
+                        : const Color(0xFF2563EB))
+                    : (palette.isDark
+                        ? Colors.white.withValues(alpha: 0.85)
+                        : palette.text.withValues(alpha: 0.85)),
+                size: compact ? 22 : 24,
+              ),
+            ),
+            if (hasUpdate)
+              Positioned(
+                top: compact ? 8 : 10,
+                right: compact ? 8 : 10,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: palette.isDark
+                          ? const Color(0xFF0F172A)
+                          : Colors.white,
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -6866,17 +7469,38 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
         if (!_loading && _error == null)
           Positioned(
             right: 20,
-            bottom: 18,
+            bottom: MediaQuery.of(context).padding.bottom + 84,
             child: FloatingActionButton.extended(
               onPressed: _sharing ? null : _shareReportImage,
+              elevation: 4,
+              backgroundColor: palette.isDark
+                  ? const Color(0xFF38BDF8)
+                  : palette.primary,
+              foregroundColor: palette.isDark
+                  ? const Color(0xFF0F172A)
+                  : Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
               icon: _sharing
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.isDark
+                            ? const Color(0xFF0F172A)
+                            : Colors.white,
+                      ),
                     )
-                  : const Icon(Icons.ios_share_rounded),
-              label: Text(_sharing ? 'Preparando...' : 'Compartir'),
+                  : const Icon(Icons.share_rounded, size: 20),
+              label: Text(
+                _sharing ? 'Preparando...' : 'Compartir',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
             ),
           ),
       ],
@@ -9208,7 +9832,7 @@ class DailyRecordTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  constraints: const BoxConstraints(minWidth: 48, maxWidth: 68),
+                  constraints: const BoxConstraints(minWidth: 48),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 7,
                     vertical: 6,
@@ -9227,7 +9851,7 @@ class DailyRecordTile extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: palette.primary,
-                      fontSize: 11,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
@@ -9252,7 +9876,11 @@ class DailyRecordTile extends StatelessWidget {
                         record.productMeta,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: palette.muted, fontSize: 12),
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ],
                   ),
@@ -9264,7 +9892,7 @@ class DailyRecordTile extends StatelessWidget {
             const SizedBox(height: 7),
             Row(
               children: [
-                Icon(Icons.workspaces_rounded, color: palette.muted, size: 15),
+                Icon(Icons.workspaces_rounded, color: palette.primary, size: 15),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -9437,13 +10065,13 @@ class DailyRecordInfoCell extends StatelessWidget {
         Icon(item.icon, color: palette.muted, size: 15),
         const SizedBox(width: 7),
         SizedBox(
-          width: 68,
+          width: 74,
           child: Text(
             '${item.label}:',
             style: TextStyle(
               color: palette.muted,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w800,
+              fontSize: 11.8,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
@@ -9454,7 +10082,7 @@ class DailyRecordInfoCell extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: palette.text,
-              fontSize: 11.8,
+              fontSize: 12.2,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -10404,6 +11032,9 @@ class AppScaffold extends StatelessWidget {
           ],
         ),
         actions: [
+          const AppNotificationButton(
+            compact: true,
+          ),
           ThemeToggleButton(
             isDarkMode: isDarkMode,
             onPressed: onToggleTheme,
@@ -10542,7 +11173,7 @@ class ConcaveCurvedBottomMenuPainter extends CustomPainter {
     if (shadowColor.a > 0) {
       final shadowPaint = Paint()
         ..color = shadowColor
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14);
       canvas.drawPath(path.shift(const Offset(0, -3)), shadowPaint);
     }
 
@@ -10571,7 +11202,7 @@ class ConcaveCurvedBottomMenuPainter extends CustomPainter {
       final borderPaint = Paint()
         ..color = topBorderColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2;
+        ..strokeWidth = 1.0;
       canvas.drawPath(borderPath, borderPaint);
     }
   }
@@ -10605,34 +11236,34 @@ class MobileHomeBottomMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final sections = _sections;
+
+    // Azul Cian original Plasencia (#38BDF8) sin brillos
     final barColor = palette.isDark
-        ? const Color(0xFF0F172A)
-        : const Color(0xFF111827);
-    final selectedColor = palette.isDark
         ? const Color(0xFF38BDF8)
+        : const Color(0xFF0F172A);
+    final selectedColor = palette.isDark
+        ? const Color(0xFF0F172A)
         : Colors.white;
-    const unselectedColor = Color(0xFF64748B);
-    const curveRadius = 24.0;
+    final unselectedColor = palette.isDark
+        ? const Color(0xFF0F172A).withValues(alpha: 0.50)
+        : const Color(0xFF94A3B8);
+    const curveRadius = 22.0;
 
     return CustomPaint(
       painter: ConcaveCurvedBottomMenuPainter(
         color: barColor,
         radius: curveRadius,
-        topBorderColor: Colors.white.withValues(
-          alpha: palette.isDark ? 0.12 : 0.08,
-        ),
-        shadowColor: Colors.black.withValues(
-          alpha: palette.isDark ? 0.40 : 0.20,
-        ),
+        topBorderColor: Colors.transparent,
+        shadowColor: Colors.transparent,
       ),
       child: SafeArea(
         top: false,
         left: false,
         right: false,
         child: Container(
-          height: 62 + curveRadius,
+          height: 52 + curveRadius,
           padding: const EdgeInsets.only(
-            top: curveRadius,
+            top: curveRadius + 1,
             left: 8,
             right: 8,
             bottom: 4,
@@ -10679,55 +11310,31 @@ class _MobileHomeBottomItem extends StatelessWidget {
     final targetColor = selected ? selectedColor : unselectedColor;
 
     return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: label,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
-          child: TweenAnimationBuilder<Color?>(
-            tween: ColorTween(end: targetColor),
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            builder: (context, color, _) {
-              final resolvedColor = color ?? targetColor;
+          child: Center(
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(end: targetColor),
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              builder: (context, color, _) {
+                final resolvedColor = color ?? targetColor;
 
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  AnimatedScale(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    scale: selected ? 1.12 : 1.0,
-                    child: Icon(
-                      icon,
-                      color: resolvedColor,
-                      size: 22,
-                    ),
+                return AnimatedScale(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  scale: selected ? 1.18 : 1.0,
+                  child: Icon(
+                    icon,
+                    color: resolvedColor,
+                    size: 24,
                   ),
-                  const SizedBox(height: 3),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: resolvedColor,
-                          fontSize: selected ? 11.2 : 10.4,
-                          height: 1.1,
-                          fontWeight: selected
-                              ? FontWeight.w900
-                              : FontWeight.w600,
-                          letterSpacing: selected ? 0.2 : 0,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
