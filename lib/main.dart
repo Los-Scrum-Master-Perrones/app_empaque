@@ -13,7 +13,7 @@ import 'package:share_plus/share_plus.dart';
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://127.0.0.1:8000/api',
+  defaultValue: 'http://192.168.2.7:8081/api',
 );
 
 Uri _apiBaseUri = _normalizeApiBaseUri(apiBaseUrl);
@@ -23,6 +23,8 @@ const logoWhiteAsset = 'assets/images/plasencia-logo-blanco.png';
 const appIconAsset = 'assets/images/logoappempaque.png';
 const themeStorageKey = 'theme_mode';
 const serverUrlStorageKey = 'server_url';
+const serverUrl2StorageKey = 'server_url_2';
+const adminServerSettingsPin = '1234';
 
 const secureStorage = FlutterSecureStorage();
 final appNavigatorKey = GlobalKey<NavigatorState>();
@@ -73,7 +75,13 @@ Uri _normalizeApiBaseUri(String value) {
     pathSegments.add('api');
   }
 
-  return uri.replace(pathSegments: pathSegments, query: '', fragment: '');
+  return Uri(
+    scheme: uri.scheme,
+    userInfo: uri.userInfo,
+    host: uri.host,
+    port: uri.hasPort ? uri.port : null,
+    pathSegments: pathSegments,
+  );
 }
 
 String currentApiBaseUrl() => _apiBaseUri.toString();
@@ -398,12 +406,13 @@ ThemeData appTheme(Brightness brightness) {
         ),
     scaffoldBackgroundColor: palette.scaffold,
     appBarTheme: AppBarTheme(
-      backgroundColor: brightness == Brightness.dark ? appDarkPanel : appNavy,
-      foregroundColor: Colors.white,
+      backgroundColor: brightness == Brightness.dark ? appDarkPanel : Colors.white,
+      foregroundColor: brightness == Brightness.dark ? Colors.white : appNavy,
       elevation: 0,
+      surfaceTintColor: Colors.transparent,
       centerTitle: false,
-      titleTextStyle: const TextStyle(
-        color: Colors.white,
+      titleTextStyle: TextStyle(
+        color: brightness == Brightness.dark ? Colors.white : appNavy,
         fontSize: 18,
         fontWeight: FontWeight.w900,
       ),
@@ -505,10 +514,19 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
   }
 
   Future<void> _restoreSession() async {
+    final minimumSplashDuration = Future<void>.delayed(
+      const Duration(milliseconds: 1500),
+    );
     final storedTheme = await secureStorage.read(key: themeStorageKey);
     final storedServerUrl = await secureStorage.read(key: serverUrlStorageKey);
     final darkMode = storedTheme == 'dark';
     final token = await secureStorage.read(key: 'auth_token');
+
+    if (mounted && _darkMode != darkMode) {
+      setState(() {
+        _darkMode = darkMode;
+      });
+    }
 
     if (storedServerUrl != null && storedServerUrl.trim().isNotEmpty) {
       try {
@@ -519,6 +537,8 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     }
 
     if (token == null) {
+      await minimumSplashDuration;
+
       if (!mounted) return;
 
       setState(() {
@@ -531,6 +551,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
 
     try {
       final user = await _authApi.me(token);
+      await minimumSplashDuration;
 
       if (!mounted) return;
 
@@ -542,6 +563,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
       });
     } catch (_) {
       await secureStorage.delete(key: 'auth_token');
+      await minimumSplashDuration;
 
       if (!mounted) return;
 
@@ -654,6 +676,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
           ? LoginPage(
               authApi: _authApi,
               onLogin: _handleLogin,
+              onServerUrlChanged: _handleServerUrlChanged,
               isDarkMode: _darkMode,
               onToggleTheme: _toggleTheme,
             )
@@ -681,21 +704,54 @@ class SplashPage extends StatefulWidget {
 class _SplashPageState extends State<SplashPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  late final Animation<double> _scale;
-  late final Animation<double> _opacity;
+  late final Animation<double> _logoOpacity;
+  late final Animation<double> _logoScale;
+  late final Animation<double> _logoOffset;
+  late final Animation<double> _frameProgress;
+  late final Animation<double> _copyOpacity;
+  late final Animation<double> _copyOffset;
+  late final Animation<double> _loaderOpacity;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1100),
-    )..repeat(reverse: true);
-    _scale = Tween<double>(begin: 0.94, end: 1.02).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic),
+      duration: const Duration(milliseconds: 1400),
+    )..forward();
+    _logoOpacity = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0, 0.35, curve: Curves.easeOut),
     );
-    _opacity = Tween<double>(begin: 0.72, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOutCubic),
+    _logoScale = Tween<double>(begin: 0.72, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.48, curve: Curves.easeOutBack),
+      ),
+    );
+    _logoOffset = Tween<double>(begin: 26, end: 0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.45, curve: Curves.easeOutCubic),
+      ),
+    );
+    _frameProgress = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.18, 0.68, curve: Curves.easeInOutCubic),
+    );
+    _copyOpacity = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.42, 0.78, curve: Curves.easeOut),
+    );
+    _copyOffset = Tween<double>(begin: 14, end: 0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.42, 0.82, curve: Curves.easeOutCubic),
+      ),
+    );
+    _loaderOpacity = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.72, 1, curve: Curves.easeOut),
     );
   }
 
@@ -707,60 +763,188 @@ class _SplashPageState extends State<SplashPage>
 
   @override
   Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
     return Scaffold(
-      backgroundColor: appNavy,
+      backgroundColor: palette.scaffold,
       body: DecoratedBox(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [appNavy, appNavySoft],
+            colors: palette.isDark
+                ? const [appNavy, Color(0xFF0F172A), appNavySoft]
+                : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)],
+            stops: const [0, 0.56, 1],
           ),
         ),
-        child: Center(
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, child) {
-              return Opacity(
-                opacity: _opacity.value,
-                child: Transform.scale(scale: _scale.value, child: child),
-              );
-            },
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 104,
-                  height: 104,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x66000000),
-                        blurRadius: 28,
-                        offset: Offset(0, 16),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -90,
+              right: -70,
+              child: LoginGlow(
+                size: 260,
+                color: palette.isDark
+                    ? const Color(0x2938BDF8)
+                    : const Color(0x2438BDF8),
+              ),
+            ),
+            Positioned(
+              left: -100,
+              bottom: -70,
+              child: LoginGlow(
+                size: 300,
+                color: palette.isDark
+                    ? const Color(0x222563EB)
+                    : const Color(0x162563EB),
+              ),
+            ),
+            Center(
+              child: AnimatedBuilder(
+                animation: _controller,
+                builder: (context, _) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Transform.translate(
+                        offset: Offset(0, _logoOffset.value),
+                        child: Transform.scale(
+                          scale: _logoScale.value,
+                          child: Opacity(
+                            opacity: _logoOpacity.value,
+                            child: SizedBox(
+                              width: 148,
+                              height: 148,
+                              child: CustomPaint(
+                                foregroundPainter: SplashFramePainter(
+                                  progress: _frameProgress.value,
+                                  color: palette.isDark
+                                      ? appSkyLight
+                                      : palette.primary,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(28),
+                                  child: Image.asset(
+                                    palette.isDark ? logoWhiteAsset : logoAsset,
+                                    fit: BoxFit.contain,
+                                    semanticLabel: 'Plasencia Logo',
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Transform.translate(
+                        offset: Offset(0, _copyOffset.value),
+                        child: Opacity(
+                          opacity: _copyOpacity.value,
+                          child: Column(
+                            children: [
+                              Text(
+                                'SISTEMA DE EMPAQUE',
+                                style: TextStyle(
+                                  color: palette.text,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2.1,
+                                ),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                'Plasencia Cigars',
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      Opacity(
+                        opacity: _loaderOpacity.value,
+                        child: SizedBox(
+                          width: 118,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(999),
+                            child: LinearProgressIndicator(
+                              minHeight: 3,
+                              color: palette.accent,
+                              backgroundColor: palette.border,
+                            ),
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                  child: Image.asset(appIconAsset, fit: BoxFit.contain),
-                ),
-                const SizedBox(height: 24),
-                const SizedBox(
-                  width: 30,
-                  height: 30,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: appSky,
-                  ),
-                ),
-              ],
+                  );
+                },
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
+  }
+}
+
+class SplashFramePainter extends CustomPainter {
+  const SplashFramePainter({required this.progress, required this.color});
+
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final inset = size.width * 0.08;
+    final segment = size.width * 0.22 * progress;
+    final radius = size.width * 0.12;
+    final paint = Paint()
+      ..color = color.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    final left = inset;
+    final top = inset;
+    final right = size.width - inset;
+    final bottom = size.height - inset;
+
+    final paths = [
+      Path()
+        ..moveTo(left, top + radius + segment)
+        ..lineTo(left, top + radius)
+        ..quadraticBezierTo(left, top, left + radius, top)
+        ..lineTo(left + radius + segment, top),
+      Path()
+        ..moveTo(right - radius - segment, top)
+        ..lineTo(right - radius, top)
+        ..quadraticBezierTo(right, top, right, top + radius)
+        ..lineTo(right, top + radius + segment),
+      Path()
+        ..moveTo(right, bottom - radius - segment)
+        ..lineTo(right, bottom - radius)
+        ..quadraticBezierTo(right, bottom, right - radius, bottom)
+        ..lineTo(right - radius - segment, bottom),
+      Path()
+        ..moveTo(left + radius + segment, bottom)
+        ..lineTo(left + radius, bottom)
+        ..quadraticBezierTo(left, bottom, left, bottom - radius)
+        ..lineTo(left, bottom - radius - segment),
+    ];
+
+    for (final path in paths) {
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant SplashFramePainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.color != color;
   }
 }
 
@@ -768,6 +952,7 @@ class LoginPage extends StatefulWidget {
   const LoginPage({
     required this.authApi,
     required this.onLogin,
+    required this.onServerUrlChanged,
     required this.isDarkMode,
     required this.onToggleTheme,
     super.key,
@@ -775,6 +960,7 @@ class LoginPage extends StatefulWidget {
 
   final AuthApi authApi;
   final ValueChanged<AuthSession> onLogin;
+  final Future<String> Function(String value) onServerUrlChanged;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
 
@@ -834,6 +1020,20 @@ class _LoginPageState extends State<LoginPage> {
         });
       }
     }
+  }
+
+  Future<void> _openAdminServerSettings() async {
+    if (!mounted) {
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AdminServerAccessPage(
+          onServerUrlChanged: widget.onServerUrlChanged,
+        ),
+      ),
+    );
   }
 
   @override
@@ -1070,6 +1270,42 @@ class _LoginPageState extends State<LoginPage> {
           ),
           Positioned(
             top: 12,
+            left: 12,
+            child: SafeArea(
+              child: Tooltip(
+                message: 'Configuracion administrativa',
+                child: Material(
+                  color: palette.surface.withValues(
+                    alpha: palette.isDark ? 0.12 : 0.92,
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  child: InkWell(
+                    onTap: _openAdminServerSettings,
+                    borderRadius: BorderRadius.circular(999),
+                    child: Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: palette.isDark
+                              ? Colors.white.withValues(alpha: 0.16)
+                              : palette.border,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.admin_panel_settings_rounded,
+                        color: palette.isDark ? Colors.white : palette.primary,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 12,
             right: 12,
             child: SafeArea(
               child: ThemeToggleButton(
@@ -1118,6 +1354,117 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
+class AdminServerAccessPage extends StatefulWidget {
+  const AdminServerAccessPage({required this.onServerUrlChanged, super.key});
+
+  final Future<String> Function(String value) onServerUrlChanged;
+
+  @override
+  State<AdminServerAccessPage> createState() => _AdminServerAccessPageState();
+}
+
+class _AdminServerAccessPageState extends State<AdminServerAccessPage> {
+  final _codeController = TextEditingController();
+  bool _authenticated = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  void _submitCode() {
+    FocusScope.of(context).unfocus();
+
+    if (_codeController.text.trim() != adminServerSettingsPin) {
+      setState(() {
+        _error = 'Codigo de autenticacion incorrecto.';
+      });
+      return;
+    }
+
+    setState(() {
+      _authenticated = true;
+      _error = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _authenticated
+              ? 'Configuracion administrativa'
+              : 'Acceso administrativo',
+        ),
+      ),
+      body: SafeArea(
+        child: _authenticated
+            ? SettingsHomeSection(
+                initialServerUrl: currentApiBaseUrl(),
+                onServerUrlChanged: widget.onServerUrlChanged,
+              )
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 32),
+                children: [
+                  SectionPlaceholderCard(
+                    icon: Icons.admin_panel_settings_rounded,
+                    title: 'Configuracion protegida',
+                    description:
+                        'Ingresa el codigo administrativo para configurar la URL del servidor.',
+                    color: palette.primary,
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    elevation: 0,
+                    color: palette.surface,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      side: BorderSide(color: palette.border),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          TextField(
+                            controller: _codeController,
+                            autofocus: true,
+                            obscureText: true,
+                            maxLength: 4,
+                            keyboardType: TextInputType.number,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _submitCode(),
+                            decoration: const InputDecoration(
+                              labelText: 'Codigo de 4 digitos',
+                              prefixIcon: Icon(Icons.password_rounded),
+                            ),
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: 10),
+                            ErrorBox(message: _error!),
+                          ],
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            onPressed: _submitCode,
+                            icon: const Icon(Icons.lock_open_rounded),
+                            label: const Text('Continuar'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
 class LoginBackground extends StatelessWidget {
   const LoginBackground({super.key});
 
@@ -1126,32 +1473,48 @@ class LoginBackground extends StatelessWidget {
     final palette = appPalette(context);
 
     return DecoratedBox(
+      key: const ValueKey('login-background-decoration'),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: palette.isDark
               ? const [Color(0xFF0B1220), Color(0xFF0F172A), appDarkPanel]
-              : const [appNavy, Color(0xFF0F172A), appNavySoft],
+              : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)],
           stops: const [0, 0.52, 1],
         ),
       ),
       child: Stack(
-        children: const [
+        children: [
           Positioned(
             top: -70,
             left: -80,
-            child: LoginGlow(size: 230, color: Color(0x2438BDF8)),
+            child: LoginGlow(
+              size: 230,
+              color: palette.isDark
+                  ? const Color(0x2438BDF8)
+                  : const Color(0x2038BDF8),
+            ),
           ),
           Positioned(
             right: -90,
             bottom: 40,
-            child: LoginGlow(size: 280, color: Color(0x332563EB)),
+            child: LoginGlow(
+              size: 280,
+              color: palette.isDark
+                  ? const Color(0x332563EB)
+                  : const Color(0x142563EB),
+            ),
           ),
           Positioned(
             left: 28,
             bottom: 84,
-            child: LoginGlow(size: 110, color: Color(0x1FFFFFFF)),
+            child: LoginGlow(
+              size: 110,
+              color: palette.isDark
+                  ? const Color(0x1FFFFFFF)
+                  : const Color(0x1A38BDF8),
+            ),
           ),
         ],
       ),
@@ -1187,29 +1550,16 @@ class LoginBrandHeader extends StatelessWidget {
 
     return Column(
       children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            color: palette.isDark ? appDarkPanel : appLightBg,
-            borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: palette.border),
-            boxShadow: [
-              BoxShadow(
-                color: palette.shadow,
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Image.asset(
-              palette.isDark ? logoWhiteAsset : logoAsset,
-              fit: BoxFit.contain,
-              gaplessPlayback: true,
-              semanticLabel: 'Plasencia Logo',
-            ),
+        SizedBox(
+          key: const ValueKey('login-transparent-logo'),
+          width: 146,
+          height: 108,
+          child: Image.asset(
+            palette.isDark ? logoWhiteAsset : logoAsset,
+            key: const ValueKey('login-brand-image'),
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            semanticLabel: 'Plasencia Logo',
           ),
         ),
         const SizedBox(height: 16),
@@ -1263,12 +1613,16 @@ class LoginLoadingOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
     return DecoratedBox(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xF20B1220), Color(0xF20F172A), Color(0xF2111C33)],
+          colors: palette.isDark
+              ? const [Color(0xF20B1220), Color(0xF20F172A), Color(0xF2111C33)]
+              : const [Color(0xFAFFFFFF), Color(0xFAF8FAFC), Color(0xFAEFF6FF)],
         ),
       ),
       child: Center(
@@ -1282,45 +1636,30 @@ class LoginLoadingOverlay extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 112,
-                height: 112,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF111827),
-                  borderRadius: BorderRadius.circular(32),
-                  border: Border.all(color: const Color(0x1AFFFFFF)),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x66000000),
-                      blurRadius: 34,
-                      offset: Offset(0, 18),
-                    ),
-                  ],
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Image.asset(
-                    logoWhiteAsset,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
-                    semanticLabel: 'Plasencia Logo',
-                  ),
+              SizedBox(
+                width: 168,
+                height: 128,
+                child: Image.asset(
+                  palette.isDark ? logoWhiteAsset : logoAsset,
+                  fit: BoxFit.contain,
+                  gaplessPlayback: true,
+                  semanticLabel: 'Plasencia Logo',
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
+              Text(
                 'Sistema de Empaque',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: palette.text,
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                 ),
               ),
               const SizedBox(height: 4),
-              const Text(
+              Text(
                 'Verificando acceso...',
                 style: TextStyle(
-                  color: Color(0xBFFFFFFF),
+                  color: palette.muted,
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1349,43 +1688,13 @@ class ThemeToggleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    return Tooltip(
-      message: isDarkMode ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro',
-      child: Material(
-        color: compact
-            ? Colors.white.withValues(alpha: 0.10)
-            : palette.surface.withValues(alpha: palette.isDark ? 0.92 : 0.96),
-        borderRadius: BorderRadius.circular(999),
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(999),
-          child: Container(
-            width: compact ? 42 : 48,
-            height: compact ? 42 : 48,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: compact
-                    ? Colors.white.withValues(alpha: 0.14)
-                    : palette.border,
-              ),
-              boxShadow: compact
-                  ? null
-                  : [
-                      BoxShadow(
-                        color: palette.shadow,
-                        blurRadius: 20,
-                        offset: const Offset(0, 10),
-                      ),
-                    ],
-            ),
-            child: Icon(
-              isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-              color: compact ? Colors.white : palette.primary,
-              size: compact ? 20 : 22,
-            ),
-          ),
-        ),
+    return IconButton(
+      tooltip: isDarkMode ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro',
+      onPressed: onPressed,
+      icon: Icon(
+        isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+        color: isDarkMode ? const Color(0xFF38BDF8) : palette.text,
+        size: compact ? 22 : 24,
       ),
     );
   }
@@ -1768,6 +2077,7 @@ class AdminAccessGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.builder(
       shrinkWrap: true,
+      padding: EdgeInsets.zero,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: items.length,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -2448,7 +2758,7 @@ class OperatorInlinePanel extends StatelessWidget {
   }
 }
 
-class InlineEmployeeHoursSearchCard extends StatefulWidget {
+class InlineEmployeeHoursSearchCard extends StatelessWidget {
   const InlineEmployeeHoursSearchCard({
     required this.authApi,
     required this.token,
@@ -2459,176 +2769,22 @@ class InlineEmployeeHoursSearchCard extends StatefulWidget {
   final String token;
 
   @override
-  State<InlineEmployeeHoursSearchCard> createState() =>
-      _InlineEmployeeHoursSearchCardState();
-}
-
-class _InlineEmployeeHoursSearchCardState
-    extends State<InlineEmployeeHoursSearchCard> {
-  final _codeController = TextEditingController();
-  bool _expanded = false;
-  bool _loading = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _codeController.dispose();
-    super.dispose();
-  }
-
-  void _expand() {
-    setState(() {
-      _expanded = true;
-      _error = null;
-    });
-  }
-
-  void _collapse() {
-    if (_loading) {
-      return;
-    }
-
-    setState(() {
-      _expanded = false;
-      _error = null;
-      _codeController.clear();
-    });
-  }
-
-  Future<void> _openEmployee(EmployeeInfo employee) async {
-    if (!mounted) {
-      return;
-    }
-
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => EmployeeHoursPage(
-          authApi: widget.authApi,
-          token: widget.token,
-          employee: employee,
-        ),
-      ),
-    );
-  }
-
-  Future<void> _search() async {
-    final code = _codeController.text.trim();
-
-    if (code.isEmpty || _loading) {
-      setState(() {
-        _error = 'Ingresa el codigo del empleado.';
-      });
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    try {
-      final employee = await widget.authApi.lookupEmployee(
-        widget.token,
-        code: code,
-      );
-
-      await _openEmployee(employee);
-    } on ApiException catch (error) {
-      if (!mounted) return;
-
-      setState(() {
-        _error = error.message;
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        _error = 'No se pudo consultar el empleado.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _scanEmployee() async {
-    final employee = await Navigator.of(context).push<EmployeeInfo>(
-      MaterialPageRoute(
-        builder: (_) =>
-            EmployeeScannerPage(authApi: widget.authApi, token: widget.token),
-      ),
-    );
-
-    if (employee == null) {
-      return;
-    }
-
-    await _openEmployee(employee);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      child: _expanded
-          ? OperatorInlinePanel(
-              icon: Icons.access_time_filled_rounded,
-              title: 'Horas ordinarias',
-              subtitle: 'Empleado',
-              toneIndex: 2,
-              onClose: _collapse,
-              children: [
-                TextField(
-                  controller: _codeController,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => unawaited(_search()),
-                  decoration: InputDecoration(
-                    labelText: 'Codigo empleado',
-                    prefixIcon: const Icon(Icons.badge_rounded),
-                    suffixIcon: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Buscar empleado',
-                          onPressed: _loading ? null : _search,
-                          icon: _loading
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.search_rounded),
-                        ),
-                        IconButton(
-                          tooltip: 'Escanear QR empleado',
-                          onPressed: _loading ? null : _scanEmployee,
-                          icon: const Icon(Icons.qr_code_scanner_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 10),
-                  ErrorBox(message: _error!),
-                ],
-              ],
-            )
-          : OperatorActionCard(
-              icon: Icons.access_time_filled_rounded,
-              title: 'Horas ordinarias',
-              subtitle: 'Empleado',
-              tone: 2,
-              iconOnLeft: true,
-              onTap: _expand,
-            ),
+    return OperatorActionCard(
+      icon: Icons.access_time_filled_rounded,
+      title: 'Horas ordinarias',
+      subtitle: 'Empleados',
+      tone: 2,
+      iconOnLeft: true,
+      trailingIcon: Icons.arrow_forward_rounded,
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                EmployeeHoursSearchPage(authApi: authApi, token: token),
+          ),
+        );
+      },
     );
   }
 }
@@ -2649,48 +2805,55 @@ class EmployeeHoursSearchPage extends StatefulWidget {
 }
 
 class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
-  final _codeController = TextEditingController();
-  bool _loading = false;
+  final _searchController = TextEditingController();
+  final _jornadaHoursController = TextEditingController();
+  final _jornadaMinutesController = TextEditingController();
+  DateTime _date = DateTime.now();
+  String _groupKey = 'rezago';
+  String _search = '';
+  int? _expandedEmployeeId;
+  bool _loading = true;
+  bool _savingJornada = false;
   String? _error;
+  EmployeeHoursOverviewResult? _result;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   @override
   void dispose() {
-    _codeController.dispose();
+    _searchController.dispose();
+    _jornadaHoursController.dispose();
+    _jornadaMinutesController.dispose();
     super.dispose();
   }
-
-  Future<void> _search() async {
-    final code = _codeController.text.trim();
-
-    if (code.isEmpty || _loading) {
-      setState(() {
-        _error = 'Ingresa el codigo del empleado.';
-      });
-      return;
-    }
-
+  Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final employee = await widget.authApi.lookupEmployee(
+      final result = await widget.authApi.employeeHoursOverview(
         widget.token,
-        code: code,
+        date: _date,
       );
 
       if (!mounted) return;
 
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => EmployeeHoursPage(
-            authApi: widget.authApi,
-            token: widget.token,
-            employee: employee,
-          ),
-        ),
-      );
+      setState(() {
+        _result = result;
+
+        if (_expandedEmployeeId != null &&
+            !result.employees.any(
+              (item) => item.employee.id == _expandedEmployeeId,
+            )) {
+          _expandedEmployeeId = null;
+        }
+      });
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -2701,7 +2864,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo consultar el empleado.';
+        _error = 'No se pudo cargar el resumen de horas ordinarias.';
       });
     } finally {
       if (mounted) {
@@ -2709,6 +2872,133 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _selectDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2024),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+
+    if (selected == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _date = DateTime(selected.year, selected.month, selected.day);
+      _expandedEmployeeId = null;
+    });
+    _clearJornadaForm();
+    unawaited(_load());
+  }
+
+  void _clearJornadaForm() {
+    _jornadaHoursController.clear();
+    _jornadaMinutesController.clear();
+  }
+
+  String get _groupLabel => switch (_groupKey) {
+    'anillado' => 'Anillado',
+    'llenado' => 'Llenado',
+    _ => 'Rezago',
+  };
+
+  List<EmployeeHoursOverviewItem> _groupEmployees() {
+    return (_result?.employees ?? const <EmployeeHoursOverviewItem>[])
+        .where((item) => item.group == _groupKey)
+        .toList(growable: false);
+  }
+
+  Future<void> _saveGroupWorkday() async {
+    if (_savingJornada) {
+      return;
+    }
+
+    final hoursText = _jornadaHoursController.text.trim();
+    final minutesText = _jornadaMinutesController.text.trim();
+    final hours = hoursText.isEmpty ? 0 : int.tryParse(hoursText);
+    final minutePart = minutesText.isEmpty ? 0 : int.tryParse(minutesText);
+
+    if (hours == null || hours < 0) {
+      showAppMessage(context, 'Ingresa horas validas.');
+      return;
+    }
+
+    if (minutePart == null || minutePart < 0 || minutePart > 59) {
+      showAppMessage(context, 'Ingresa minutos entre 0 y 59.');
+      return;
+    }
+
+    final totalMinutes = (hours * 60) + minutePart;
+
+    if (totalMinutes <= 0 || totalMinutes > 570) {
+      showAppMessage(
+        context,
+        'Ingresa una jornada entre 1 minuto y 9 h 30 min.',
+      );
+      return;
+    }
+
+    final employees = _groupEmployees();
+
+    if (employees.isEmpty) {
+      showAppMessage(
+        context,
+        'No hay empleados en $_groupLabel para la fecha seleccionada.',
+      );
+      return;
+    }
+
+    setState(() {
+      _savingJornada = true;
+    });
+
+    var updatedEmployees = 0;
+    var updatedRecords = 0;
+    var failedEmployees = 0;
+
+    for (final item in employees) {
+      try {
+        final result = await widget.authApi.distributeEmployeeWorkday(
+          widget.token,
+          employeeId: item.employee.id,
+          date: _date,
+          group: _groupKey,
+          minutes: totalMinutes,
+        );
+        updatedEmployees++;
+        updatedRecords += result.registrosActualizados;
+      } catch (_) {
+        failedEmployees++;
+      }
+    }
+
+    if (!mounted) return;
+
+    if (updatedEmployees > 0) {
+      _clearJornadaForm();
+      showAppMessage(
+        context,
+        failedEmployees == 0
+            ? 'Jornada aplicada a $updatedEmployees empleados de $_groupLabel en $updatedRecords viñetas.'
+            : 'Jornada aplicada a $updatedEmployees empleados; $failedEmployees no pudieron actualizarse.',
+        isError: failedEmployees > 0,
+      );
+      await _load();
+    } else {
+      showAppMessage(
+        context,
+        'No se pudo distribuir la jornada en $_groupLabel.',
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _savingJornada = false;
+      });
     }
   }
 
@@ -2724,90 +3014,252 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       return;
     }
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => EmployeeHoursPage(
-          authApi: widget.authApi,
-          token: widget.token,
-          employee: employee,
-        ),
-      ),
-    );
+    final result = _result;
+    final item = result?.employees
+        .where((item) => item.employee.id == employee.id)
+        .firstOrNull;
+
+    if (item == null) {
+      showAppMessage(
+        context,
+        'El empleado no tiene viñetas en los grupos del dia seleccionado.',
+      );
+      return;
+    }
+
+    setState(() {
+      _groupKey = item.group;
+      _search = employee.codigo;
+      _searchController.text = employee.codigo;
+      _expandedEmployeeId = employee.id;
+    });
+  }
+
+  List<EmployeeHoursOverviewItem> _visibleEmployees() {
+    final normalizedSearch = _normalizeForMatch(_search);
+
+    return (_result?.employees ?? const <EmployeeHoursOverviewItem>[])
+        .where((item) => item.group == _groupKey)
+        .where((item) {
+          if (normalizedSearch.isEmpty) {
+            return true;
+          }
+
+          final employee = item.employee;
+          final text = _normalizeForMatch(
+            [
+              employee.codigo,
+              employee.nombre,
+              employee.cargo,
+              employee.area,
+            ].nonNulls.join(' '),
+          );
+
+          return text.contains(normalizedSearch);
+        })
+        .toList(growable: false);
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
+    final result = _result;
+    final employees = _visibleEmployees();
+    final groupEmployees = _groupEmployees();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Horas ordinarias')),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(8, 20, 8, 28),
-          children: [
-            SectionPlaceholderCard(
-              icon: Icons.access_time_filled_rounded,
-              title: 'Buscar empleado',
-              description:
-                  'Consulta las horas del empleado por dia y agrega horas ordinarias con observacion.',
-              color: palette.primary,
-            ),
-            const SizedBox(height: 12),
-            Card(
-              elevation: 0,
-              color: palette.surface,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(22),
-                side: BorderSide(color: palette.border),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: _codeController,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => unawaited(_search()),
-                      decoration: const InputDecoration(
-                        labelText: 'Codigo empleado',
-                        prefixIcon: Icon(Icons.badge_rounded),
-                      ),
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            key: const ValueKey('employee-hours-overview-list'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(8, 14, 8, 28),
+            children: [
+              InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: _selectDate,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Dia',
+                    prefixIcon: Icon(Icons.event_rounded),
+                    suffixIcon: Icon(Icons.keyboard_arrow_down_rounded),
+                  ),
+                  child: Text(
+                    formatWorkDate(_date),
+                    style: TextStyle(
+                      color: palette.text,
+                      fontWeight: FontWeight.w900,
                     ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 10),
-                      ErrorBox(message: _error!),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed: _loading ? null : _search,
-                            icon: _loading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.search_rounded),
-                            label: Text(_loading ? 'Buscando...' : 'Buscar'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        SizedBox(
-                          height: 52,
-                          width: 56,
-                          child: IconButton.filledTonal(
-                            tooltip: 'Escanear QR empleado',
-                            onPressed: _loading ? null : _scanEmployee,
-                            icon: const Icon(Icons.qr_code_scanner_rounded),
-                          ),
-                        ),
-                      ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              EmployeeHoursFiltersCard(
+                controller: _searchController,
+                groupKey: _groupKey,
+                groupCounts: result?.groupCounts ?? const <String, int>{},
+                onGroupChanged: (value) {
+                  setState(() {
+                    _groupKey = value;
+                    _expandedEmployeeId = null;
+                  });
+                  _clearJornadaForm();
+                },
+                onSearchChanged: (value) {
+                  setState(() {
+                    _search = value;
+                    _expandedEmployeeId = null;
+                  });
+                },
+                onScanEmployee: _scanEmployee,
+              ),
+              if (!_loading && _error == null && groupEmployees.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                EmployeeWorkdayForm(
+                  enabled: !_savingJornada,
+                  hoursController: _jornadaHoursController,
+                  minutesController: _jornadaMinutesController,
+                  saving: _savingJornada,
+                  description:
+                      'Se aplicara a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)}.',
+                  onSubmit: _saveGroupWorkday,
+                ),
+              ],
+              if (_loading) ...[
+                const SizedBox(height: 24),
+                Center(
+                  child: CircularProgressIndicator(color: palette.primary),
+                ),
+              ] else if (_error != null) ...[
+                const SizedBox(height: 12),
+                ErrorBox(message: _error!),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Reintentar'),
+                ),
+              ] else if (employees.isEmpty) ...[
+                const SizedBox(height: 18),
+                Text(
+                  _search.trim().isEmpty
+                      ? 'No hay empleados con viñetas en este grupo para el dia seleccionado.'
+                      : 'No hay empleados que coincidan con la busqueda.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: palette.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ] else ...[
+                const SizedBox(height: 10),
+                for (final item in employees) ...[
+                  EmployeeHoursAccordionCard(
+                    key: ValueKey('employee-hours-${item.employee.id}'),
+                    item: item,
+                    expanded: _expandedEmployeeId == item.employee.id,
+                    onToggle: () {
+                      setState(() {
+                        _expandedEmployeeId =
+                            _expandedEmployeeId == item.employee.id
+                            ? null
+                            : item.employee.id;
+                      });
+                    },
+                    child: _expandedEmployeeId == item.employee.id
+                        ? EmployeeHoursPage(
+                            key: ValueKey(
+                              'employee-hours-detail-${item.employee.id}-${formatApiDate(_date)}',
+                            ),
+                            authApi: widget.authApi,
+                            token: widget.token,
+                            employee: item.employee,
+                            group: item.group,
+                            initialDate: _date,
+                            embedded: true,
+                            onChanged: _load,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class EmployeeHoursFiltersCard extends StatelessWidget {
+  const EmployeeHoursFiltersCard({
+    required this.controller,
+    required this.groupKey,
+    required this.groupCounts,
+    required this.onGroupChanged,
+    required this.onSearchChanged,
+    required this.onScanEmployee,
+    super.key,
+  });
+
+  final TextEditingController controller;
+  final String groupKey;
+  final Map<String, int> groupCounts;
+  final ValueChanged<String> onGroupChanged;
+  final ValueChanged<String> onSearchChanged;
+  final VoidCallback onScanEmployee;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return Card(
+      elevation: 0,
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: palette.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DailyRecordsActivityGroupTabs(
+              selectedKey: groupKey,
+              groupCounts: groupCounts,
+              onChanged: onGroupChanged,
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              key: const ValueKey('employee-hours-search'),
+              controller: controller,
+              textInputAction: TextInputAction.search,
+              onChanged: onSearchChanged,
+              decoration: InputDecoration(
+                labelText: 'Buscar empleado',
+                hintText: 'Codigo o nombre',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (controller.text.trim().isNotEmpty)
+                      IconButton(
+                        tooltip: 'Limpiar busqueda',
+                        onPressed: () {
+                          controller.clear();
+                          onSearchChanged('');
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    IconButton(
+                      tooltip: 'Escanear QR empleado',
+                      onPressed: onScanEmployee,
+                      icon: const Icon(Icons.qr_code_scanner_rounded),
                     ),
                   ],
                 ),
@@ -2815,6 +3267,171 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class EmployeeHoursAccordionCard extends StatelessWidget {
+  const EmployeeHoursAccordionCard({
+    required this.item,
+    required this.expanded,
+    required this.onToggle,
+    this.child,
+    super.key,
+  });
+
+  final EmployeeHoursOverviewItem item;
+  final bool expanded;
+  final VoidCallback onToggle;
+  final Widget? child;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final employee = item.employee;
+    final summary = item.summary;
+    final progress = (summary.porcentaje / 100).clamp(0.0, 1.0);
+    final color = summary.completado ? const Color(0xFF10B981) : palette.accent;
+
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: palette.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: ValueKey('employee-hours-toggle-${employee.id}'),
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: palette.surfaceSoft,
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          employee.codigo,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.primary,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              employee.nombre,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.text,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            Text(
+                              employee.cargo ?? item.groupLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.muted,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${summary.totalVinetas} viñetas · ${summary.totalPuros} puros · ${summary.totalActividades} actividades',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.muted,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        summary.totalTexto,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      AnimatedRotation(
+                        turns: expanded ? 0.5 : 0,
+                        duration: const Duration(milliseconds: 180),
+                        child: Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: palette.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 9),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      minHeight: 7,
+                      value: progress,
+                      color: color,
+                      backgroundColor: palette.accentSoft,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '${summary.porcentaje.toStringAsFixed(summary.porcentaje.truncateToDouble() == summary.porcentaje ? 0 : 1)}% de ${summary.metaTexto}',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: palette.muted,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            child: child == null
+                ? const SizedBox.shrink()
+                : DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border(top: BorderSide(color: palette.border)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                      child: child,
+                    ),
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -3012,7 +3629,6 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
 
     unawaited(_load());
   }
-
   Future<void> _load() async {
     final requestId = ++_requestId;
 
@@ -3996,12 +4612,20 @@ class EmployeeHoursPage extends StatefulWidget {
     required this.authApi,
     required this.token,
     required this.employee,
+    required this.group,
+    this.initialDate,
+    this.embedded = false,
+    this.onChanged,
     super.key,
   });
 
   final AuthApi authApi;
   final String token;
   final EmployeeInfo employee;
+  final String group;
+  final DateTime? initialDate;
+  final bool embedded;
+  final Future<void> Function()? onChanged;
 
   @override
   State<EmployeeHoursPage> createState() => _EmployeeHoursPageState();
@@ -4009,15 +4633,16 @@ class EmployeeHoursPage extends StatefulWidget {
 
 class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
   final _scrollController = ScrollController();
+  final _ordinaryHourFormKey = GlobalKey();
   final _hoursController = TextEditingController();
   final _minutesController = TextEditingController();
-  final _jornadaHoursController = TextEditingController();
-  final _jornadaMinutesController = TextEditingController();
   final _observationController = TextEditingController();
-  DateTime _date = DateTime.now();
+  final _workdayHoursController = TextEditingController();
+  final _workdayMinutesController = TextEditingController();
+  late DateTime _date;
   bool _loading = true;
   bool _saving = false;
-  bool _savingJornada = false;
+  bool _savingWorkday = false;
   String? _error;
   EmployeeHoursDayInfo? _result;
   EmployeeOrdinaryHourInfo? _editingHour;
@@ -4025,6 +4650,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
   @override
   void initState() {
     super.initState();
+    _date = widget.initialDate ?? DateTime.now();
     _load();
   }
 
@@ -4033,12 +4659,56 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
     _scrollController.dispose();
     _hoursController.dispose();
     _minutesController.dispose();
-    _jornadaHoursController.dispose();
-    _jornadaMinutesController.dispose();
     _observationController.dispose();
+    _workdayHoursController.dispose();
+    _workdayMinutesController.dispose();
     super.dispose();
   }
 
+  Future<void> _saveIndividualWorkday() async {
+    final hours = int.tryParse(_workdayHoursController.text.trim()) ?? 0;
+    final minutes = int.tryParse(_workdayMinutesController.text.trim()) ?? 0;
+    final totalMinutes = (hours * 60) + minutes;
+
+    if (hours < 0 || minutes < 0 || minutes > 59 || totalMinutes <= 0 || totalMinutes > 570) {
+      _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30 min.');
+      return;
+    }
+
+    setState(() {
+      _savingWorkday = true;
+    });
+
+    try {
+      await widget.authApi.distributeEmployeeWorkday(
+        widget.token,
+        employeeId: widget.employee.id,
+        date: _date,
+        group: widget.group,
+        minutes: totalMinutes,
+      );
+
+      if (!mounted) return;
+
+      _workdayHoursController.clear();
+      _workdayMinutesController.clear();
+      _showMessage('Jornada laboral distribuida correctamente.', isError: false);
+      await _load();
+      await widget.onChanged?.call();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('No se pudo distribuir la jornada laboral.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingWorkday = false;
+        });
+      }
+    }
+  }
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -4050,6 +4720,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         widget.token,
         employeeId: widget.employee.id,
         date: _date,
+        group: widget.group,
       );
 
       if (!mounted) return;
@@ -4095,7 +4766,6 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
     });
 
     _clearOrdinaryHourForm();
-    _clearJornadaForm();
     unawaited(_load());
   }
 
@@ -4164,6 +4834,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         isError: false,
       );
       await _load();
+      await widget.onChanged?.call();
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -4188,74 +4859,6 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
     _editingHour = null;
   }
 
-  void _clearJornadaForm() {
-    _jornadaHoursController.clear();
-    _jornadaMinutesController.clear();
-  }
-
-  Future<void> _saveJornadaLaboral() async {
-    if (_savingJornada) {
-      return;
-    }
-
-    final hoursText = _jornadaHoursController.text.trim();
-    final minutesText = _jornadaMinutesController.text.trim();
-    final hours = hoursText.isEmpty ? 0 : int.tryParse(hoursText);
-    final minutePart = minutesText.isEmpty ? 0 : int.tryParse(minutesText);
-
-    if (hours == null || hours < 0) {
-      _showMessage('Ingresa horas validas.');
-      return;
-    }
-
-    if (minutePart == null || minutePart < 0 || minutePart > 59) {
-      _showMessage('Ingresa minutos entre 0 y 59.');
-      return;
-    }
-
-    final totalMinutes = (hours * 60) + minutePart;
-
-    if (totalMinutes <= 0 || totalMinutes > 570) {
-      _showMessage('Ingresa una jornada entre 1 minuto y 9 h 30 min.');
-      return;
-    }
-
-    setState(() {
-      _savingJornada = true;
-    });
-
-    try {
-      final result = await widget.authApi.distributeEmployeeWorkday(
-        widget.token,
-        employeeId: widget.employee.id,
-        date: _date,
-        minutes: totalMinutes,
-      );
-
-      if (!mounted) return;
-
-      _showMessage(
-        'Jornada distribuida: ${result.tiempoDistribuidoTexto} en ${result.registrosActualizados} viñetas.',
-        isError: false,
-      );
-      await _load();
-    } on ApiException catch (error) {
-      if (!mounted) return;
-
-      _showMessage(error.message);
-    } catch (_) {
-      if (!mounted) return;
-
-      _showMessage('No se pudo distribuir la jornada laboral.');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _savingJornada = false;
-        });
-      }
-    }
-  }
-
   void _startEditOrdinaryHour(EmployeeOrdinaryHourInfo item) {
     setState(() {
       _editingHour = item;
@@ -4265,16 +4868,254 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) {
+      final formContext = _ordinaryHourFormKey.currentContext;
+
+      if (formContext == null) {
         return;
       }
 
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+      Scrollable.ensureVisible(
+        formContext,
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
+        alignment: .08,
       );
     });
+  }
+
+  Future<void> _openWorkdayActions(EmployeeWorkdayDistributionInfo item) async {
+    if (_savingWorkday) {
+      return;
+    }
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        final palette = appPalette(context);
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  item.tiempoDistribuidoTexto,
+                  style: TextStyle(
+                    color: palette.text,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${item.registrosActualizados} viñetas con jornada distribuida',
+                  style: TextStyle(color: palette.muted),
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: () => Navigator.of(context).pop('edit'),
+                  icon: const Icon(Icons.edit_rounded),
+                  label: const Text('Editar'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).pop('delete'),
+                  icon: const Icon(Icons.delete_rounded),
+                  label: const Text('Eliminar'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (!mounted || action == null) {
+      return;
+    }
+
+    if (action == 'edit') {
+      await _editWorkday(item);
+    } else if (action == 'delete') {
+      await _confirmDeleteWorkday(item);
+    }
+  }
+
+  Future<void> _editWorkday(EmployeeWorkdayDistributionInfo item) async {
+    var hoursText = (item.minutosDistribuidos ~/ 60).toString();
+    var minutesText = (item.minutosDistribuidos % 60).toString();
+    String? validationError;
+
+    final totalMinutes = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Editar jornada distribuida'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      key: const ValueKey('employee-workday-hours'),
+                      initialValue: hoursText,
+                      onChanged: (value) => hoursText = value,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Horas'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      key: const ValueKey('employee-workday-minutes'),
+                      initialValue: minutesText,
+                      onChanged: (value) => minutesText = value,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Minutos'),
+                    ),
+                  ),
+                ],
+              ),
+              if (validationError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  validationError!,
+                  style: TextStyle(color: appPalette(context).errorText),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              key: const ValueKey('employee-workday-submit'),
+              onPressed: () {
+                final hours = int.tryParse(hoursText.trim()) ?? 0;
+                final minutes = int.tryParse(minutesText.trim()) ?? 0;
+                final total = (hours * 60) + minutes;
+
+                if (hours < 0 ||
+                    minutes < 0 ||
+                    minutes > 59 ||
+                    total <= 0 ||
+                    total > 570) {
+                  setDialogState(() {
+                    validationError =
+                        'Ingresa un tiempo entre 1 min y 9 h 30 min.';
+                  });
+                  return;
+                }
+
+                Navigator.of(dialogContext).pop(total);
+              },
+              child: const Text('Guardar cambios'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (totalMinutes == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _savingWorkday = true;
+    });
+
+    try {
+      await widget.authApi.distributeEmployeeWorkday(
+        widget.token,
+        employeeId: widget.employee.id,
+        date: _date,
+        group: widget.group,
+        minutes: totalMinutes,
+      );
+
+      if (!mounted) return;
+
+      _showMessage('Jornada laboral actualizada.', isError: false);
+      await _load();
+      await widget.onChanged?.call();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('No se pudo actualizar la jornada laboral.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingWorkday = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteWorkday(
+    EmployeeWorkdayDistributionInfo item,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Eliminar jornada distribuida'),
+        content: Text(
+          'Eliminar ${item.tiempoDistribuidoTexto} de jornada laboral?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _savingWorkday = true;
+    });
+
+    try {
+      await widget.authApi.deleteEmployeeWorkday(
+        widget.token,
+        employeeId: widget.employee.id,
+        date: _date,
+        group: widget.group,
+      );
+
+      if (!mounted) return;
+
+      _showMessage('Jornada laboral eliminada.', isError: false);
+      await _load();
+      await widget.onChanged?.call();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('No se pudo eliminar la jornada laboral.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingWorkday = false;
+        });
+      }
+    }
   }
 
   Future<void> _openOrdinaryHourActions(EmployeeOrdinaryHourInfo item) async {
@@ -4372,6 +5213,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
 
       _showMessage('Hora ordinaria eliminada.', isError: false);
       await _load();
+      await widget.onChanged?.call();
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -4391,6 +5233,140 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final result = _result;
+    final children = <Widget>[
+      if (!widget.embedded) ...[
+        EmployeeHoursEmployeeCard(employee: widget.employee),
+        const SizedBox(height: 10),
+        InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: _selectDate,
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Dia',
+              suffixIcon: Icon(Icons.event_rounded),
+            ),
+            child: Text(
+              formatWorkDate(_date),
+              style: TextStyle(
+                color: palette.text,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+      if (_loading)
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 18),
+            child: CircularProgressIndicator(color: palette.primary),
+          ),
+        )
+      else if (_error != null)
+        ErrorBox(message: _error!)
+      else if (result != null) ...[
+        EmployeeHoursSummaryCard(summary: result.summary),
+        if (!result.tableAvailable) ...[
+          const SizedBox(height: 10),
+          ErrorBox(
+            message:
+                'Pendiente ejecutar la migracion de horas ordinarias para poder agregar registros manuales.',
+          ),
+        ],
+        const SizedBox(height: 12),
+        EmployeeHoursSection(
+          title: 'Distribución de jornada laboral agregada',
+          emptyText: 'Todavia no hay una jornada laboral distribuida.',
+          children: result.jornadaLaboral == null
+              ? const []
+              : [
+                  Dismissible(
+                    key: ValueKey(
+                      'jornada-laboral-${widget.employee.id}-${result.jornadaLaboral!.minutosDistribuidos}',
+                    ),
+                    direction: DismissDirection.endToStart,
+                    confirmDismiss: (_) async {
+                      await _openWorkdayActions(result.jornadaLaboral!);
+                      return false;
+                    },
+                    background: const EmployeeHoursSwipeActionsBackground(
+                      label: 'Editar o eliminar',
+                    ),
+                    child: EmployeeHoursEntryTile(
+                      key: ValueKey('employee-workday-${widget.employee.id}'),
+                      title: result.jornadaLaboral!.tiempoDistribuidoTexto,
+                      subtitle:
+                          '${result.jornadaLaboral!.registrosActualizados} viñetas distribuidas',
+                      trailing: 'Jornada',
+                      onTap: () => _openWorkdayActions(result.jornadaLaboral!),
+                    ),
+                  ),
+                ],
+        ),
+        const SizedBox(height: 12),
+        EmployeeHoursSection(
+          title: 'Horas ordinarias agregadas',
+          emptyText: 'Todavia no hay horas ordinarias agregadas.',
+          children: result.horasOrdinarias
+              .map(
+                (item) => Dismissible(
+                  key: ValueKey(
+                    'hora-ordinaria-${item.id}-${item.minutos}-${item.observacion}',
+                  ),
+                  direction: DismissDirection.endToStart,
+                  confirmDismiss: (_) async {
+                    await _openOrdinaryHourActions(item);
+                    return false;
+                  },
+                  background: EmployeeHoursSwipeActionsBackground(
+                    label: 'Editar o eliminar',
+                  ),
+                  child: EmployeeHoursEntryTile(
+                    title: item.tiempoTexto,
+                    subtitle: item.observacion,
+                    trailing: item.createdAtTexto ?? 'Agregado',
+                    footer: item.registradoPor,
+                    onTap: () => _openOrdinaryHourActions(item),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 12),
+        EmployeeOrdinaryHourForm(
+          key: _ordinaryHourFormKey,
+          enabled: result.tableAvailable && !_saving && !_savingWorkday,
+          hoursController: _hoursController,
+          minutesController: _minutesController,
+          observationController: _observationController,
+          saving: _saving,
+          editing: _editingHour != null,
+          onCancelEdit: () {
+            setState(_clearOrdinaryHourForm);
+          },
+          onSubmit: _saveOrdinaryHour,
+        ),
+        const SizedBox(height: 12),
+        EmployeeWorkdayForm(
+          enabled: !_saving && !_savingWorkday,
+          hoursController: _workdayHoursController,
+          minutesController: _workdayMinutesController,
+          saving: _savingWorkday,
+          description: result.jornadaLaboral != null
+              ? 'Actualizar o redistribuir la jornada individual para ${widget.employee.nombre}.'
+              : 'Distribuir tiempo de jornada laboral individual para ${widget.employee.nombre} entre sus viñetas.',
+          onSubmit: _saveIndividualWorkday,
+        ),
+      ],
+    ];
+
+    if (widget.embedded) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: children,
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Horas del empleado')),
@@ -4398,116 +5374,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         child: ListView(
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(8, 14, 8, 28),
-          children: [
-            EmployeeHoursEmployeeCard(employee: widget.employee),
-            const SizedBox(height: 10),
-            InkWell(
-              borderRadius: BorderRadius.circular(18),
-              onTap: _selectDate,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Dia',
-                  suffixIcon: Icon(Icons.event_rounded),
-                ),
-                child: Text(
-                  formatWorkDate(_date),
-                  style: TextStyle(
-                    color: palette.text,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            if (_loading)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  child: CircularProgressIndicator(color: palette.primary),
-                ),
-              )
-            else if (_error != null)
-              ErrorBox(message: _error!)
-            else if (result != null) ...[
-              EmployeeHoursSummaryCard(summary: result.summary),
-              if (!result.tableAvailable) ...[
-                const SizedBox(height: 10),
-                ErrorBox(
-                  message:
-                      'Pendiente ejecutar la migracion de horas ordinarias para poder agregar registros manuales.',
-                ),
-              ],
-              const SizedBox(height: 12),
-              EmployeeHoursSection(
-                title: 'Cajones escaneados',
-                emptyText: 'No hay horas de cajones escaneados para este dia.',
-                children: result.cajones
-                    .map(
-                      (item) => EmployeeHoursEntryTile(
-                        title: item.vineta ?? 'Cajon',
-                        subtitle:
-                            item.actividad ??
-                            item.producto ??
-                            'Registro escaneado',
-                        trailing: item.porHora
-                            ? 'Por hora ordinario'
-                            : item.tiempoTexto,
-                        footer: item.registradoEnTexto,
-                      ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 12),
-              EmployeeHoursSection(
-                title: 'Horas ordinarias agregadas',
-                emptyText: 'Todavia no hay horas ordinarias agregadas.',
-                children: result.horasOrdinarias
-                    .map(
-                      (item) => Dismissible(
-                        key: ValueKey(
-                          'hora-ordinaria-${item.id}-${item.minutos}-${item.observacion}',
-                        ),
-                        direction: DismissDirection.endToStart,
-                        confirmDismiss: (_) async {
-                          await _openOrdinaryHourActions(item);
-                          return false;
-                        },
-                        background: EmployeeHoursSwipeActionsBackground(
-                          label: 'Editar o eliminar',
-                        ),
-                        child: EmployeeHoursEntryTile(
-                          title: item.tiempoTexto,
-                          subtitle: item.observacion,
-                          trailing: item.createdAtTexto ?? 'Agregado',
-                          footer: item.registradoPor,
-                        ),
-                      ),
-                    )
-                    .toList(),
-              ),
-              const SizedBox(height: 12),
-              EmployeeOrdinaryHourForm(
-                enabled: result.tableAvailable && !_saving && !_savingJornada,
-                hoursController: _hoursController,
-                minutesController: _minutesController,
-                observationController: _observationController,
-                saving: _saving,
-                editing: _editingHour != null,
-                onCancelEdit: () {
-                  setState(_clearOrdinaryHourForm);
-                },
-                onSubmit: _saveOrdinaryHour,
-              ),
-              const SizedBox(height: 12),
-              EmployeeWorkdayForm(
-                enabled: !_saving && !_savingJornada,
-                hoursController: _jornadaHoursController,
-                minutesController: _jornadaMinutesController,
-                saving: _savingJornada,
-                onSubmit: _saveJornadaLaboral,
-              ),
-            ],
-          ],
+          children: children,
         ),
       ),
     );
@@ -4656,8 +5523,33 @@ class EmployeeHoursSummaryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _EmployeeHoursSummaryMetric(
-                    label: 'Cajones',
-                    value: summary.tiempoCajonesTexto,
+                    label: 'Viñetas',
+                    value: summary.totalVinetas.toString(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _EmployeeHoursSummaryMetric(
+                    label: 'Puros',
+                    value: summary.totalPuros.toString(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _EmployeeHoursSummaryMetric(
+                    label: 'Actividades',
+                    value: summary.totalActividades.toString(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _EmployeeHoursSummaryMetric(
+                    label: 'En viñetas',
+                    value: summary.tiempoVinetasTexto,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -4809,6 +5701,7 @@ class EmployeeHoursEntryTile extends StatelessWidget {
     required this.trailing,
     this.subtitle,
     this.footer,
+    this.onTap,
     super.key,
   });
 
@@ -4816,77 +5709,93 @@ class EmployeeHoursEntryTile extends StatelessWidget {
   final String? subtitle;
   final String trailing;
   final String? footer;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: palette.surfaceSoft,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 3),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: palette.surfaceSoft,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: palette.border),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    subtitle!,
+                    title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: palette.muted, fontSize: 12),
-                  ),
-                ],
-                if (footer != null && footer!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Text(
-                    footer!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: palette.muted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                      color: palette.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
+                  if (subtitle != null && subtitle!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle!,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: palette.muted, fontSize: 12),
+                    ),
+                  ],
+                  if (footer != null && footer!.trim().isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      footer!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 96),
-            child: Text(
-              trailing,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: palette.primary,
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 112),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      trailing,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: palette.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  if (onTap != null) ...[
+                    const SizedBox(width: 5),
+                    Icon(Icons.edit_rounded, size: 17, color: palette.primary),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -4989,6 +5898,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('ordinary-hour-hours'),
                     controller: hoursController,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
@@ -5001,6 +5911,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('ordinary-hour-minutes'),
                     controller: minutesController,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
@@ -5014,6 +5925,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
             ),
             const SizedBox(height: 10),
             TextField(
+              key: const ValueKey('ordinary-hour-observation'),
               controller: observationController,
               enabled: enabled,
               maxLines: 3,
@@ -5033,6 +5945,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
               const SizedBox(height: 8),
             ],
             FilledButton.icon(
+              key: const ValueKey('ordinary-hour-submit'),
               onPressed: enabled ? onSubmit : null,
               icon: saving
                   ? const SizedBox(
@@ -5062,6 +5975,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
     required this.hoursController,
     required this.minutesController,
     required this.saving,
+    required this.description,
     required this.onSubmit,
     super.key,
   });
@@ -5070,6 +5984,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
   final TextEditingController hoursController;
   final TextEditingController minutesController;
   final bool saving;
+  final String description;
   final VoidCallback onSubmit;
 
   @override
@@ -5089,11 +6004,20 @@ class EmployeeWorkdayForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Jornada laboral',
+              'Distribuir jornada laboral',
               style: TextStyle(
                 color: palette.text,
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              style: TextStyle(
+                color: palette.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 10),
@@ -5101,6 +6025,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('group-workday-hours'),
                     controller: hoursController,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
@@ -5114,6 +6039,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('group-workday-minutes'),
                     controller: minutesController,
                     enabled: enabled,
                     keyboardType: TextInputType.number,
@@ -5128,6 +6054,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             FilledButton.icon(
+              key: const ValueKey('group-workday-submit'),
               onPressed: enabled ? onSubmit : null,
               icon: saving
                   ? const SizedBox(
@@ -5211,13 +6138,13 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       return;
     }
 
-    final groupRecords = dailyRecordsForActivityGroup(
+    final groupRecords = dailyRecordsForEmployeeGroup(
       result.records,
       _activityGroupKey,
     );
     final summaries = dailyRecordsEmployeeSummaries(groupRecords);
 
-    _groupCounts = dailyRecordsActivityGroupCounts(result.records);
+    _groupCounts = dailyRecordsEmployeeGroupCounts(result.records);
     _employeeSummariesForGroup = summaries;
     _visibleEmployeeSummaries = _filteredEmployeeSummaries(summaries);
     _totalPurosForGroup = summaries.fold<int>(
@@ -5229,7 +6156,6 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       (total, summary) => total + summary.totalActividades,
     );
   }
-
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -5500,6 +6426,7 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
 
                       return DailyRecordsEmployeeTile(
                         summary: summary,
+                        position: index + 1,
                         onTap: () => _openEmployeeRecords(summary),
                       );
                     },
@@ -5549,10 +6476,16 @@ List<DailyRecordsEmployeeSummary> dailyRecordsEmployeeSummaries(
       .toList();
 
   summaries.sort((a, b) {
-    final totalComparison = b.totalPuros.compareTo(a.totalPuros);
+    final totalComparison = b.totalActividades.compareTo(a.totalActividades);
 
     if (totalComparison != 0) {
       return totalComparison;
+    }
+
+    final purosComparison = b.totalPuros.compareTo(a.totalPuros);
+
+    if (purosComparison != 0) {
+      return purosComparison;
     }
 
     return a.codigo.toLowerCase().compareTo(b.codigo.toLowerCase());
@@ -5577,14 +6510,60 @@ const dailyRecordsActivityGroups = [
   DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
 ];
 
+const dailyRecordsEmployeeGroups = [
+  ...dailyRecordsActivityGroups,
+  DailyRecordsActivityGroupOption(key: 'por_hora', label: 'Por hora'),
+];
+
 DailyRecordsActivityGroupOption dailyRecordsActivityGroupOption(String key) {
-  for (final option in dailyRecordsActivityGroups) {
+  for (final option in dailyRecordsEmployeeGroups) {
     if (option.key == key) {
       return option;
     }
   }
 
   return dailyRecordsActivityGroups.first;
+}
+
+List<DailyVinetaRegistroInfo> dailyRecordsForEmployeeGroup(
+  List<DailyVinetaRegistroInfo> records,
+  String groupKey,
+) {
+  return records
+      .where((record) => dailyRecordMatchesEmployeeGroup(record, groupKey))
+      .toList(growable: false);
+}
+
+Map<String, int> dailyRecordsEmployeeGroupCounts(
+  List<DailyVinetaRegistroInfo> records,
+) {
+  return {
+    for (final option in dailyRecordsEmployeeGroups)
+      option.key: dailyRecordsForEmployeeGroup(records, option.key).length,
+  };
+}
+
+bool dailyRecordMatchesEmployeeGroup(
+  DailyVinetaRegistroInfo record,
+  String groupKey,
+) {
+  if (groupKey == 'por_hora') {
+    return record.porHora;
+  }
+
+  if (record.porHora) {
+    return false;
+  }
+
+  final employeeGroup = record.employeeGroup?.trim().toLowerCase();
+
+  if (employeeGroup == 'rezago' ||
+      employeeGroup == 'anillado' ||
+      employeeGroup == 'llenado') {
+    return employeeGroup == groupKey;
+  }
+
+  return dailyRecordMatchesActivityGroup(record, groupKey);
 }
 
 List<DailyVinetaRegistroInfo> dailyRecordsForActivityGroup(
@@ -5609,19 +6588,74 @@ bool dailyRecordMatchesActivityGroup(
   DailyVinetaRegistroInfo record,
   String groupKey,
 ) {
-  final text = [
-    record.actividad.nombre,
-    record.actividad.tipoEmpaque,
-    record.actividad.codigoActividad,
-  ].whereType<String>().join(' ').toLowerCase();
+  final serverGroup = record.activityGroup?.trim().toLowerCase();
+
+  if (serverGroup == groupKey) {
+    return true;
+  }
+
+  if (serverGroup == 'rezago' ||
+      serverGroup == 'anillado' ||
+      serverGroup == 'llenado') {
+    return false;
+  }
+
+  final text = _normalizeForMatch(
+    [
+      record.actividad.nombre,
+      record.actividad.tipoEmpaque,
+      record.actividad.codigoActividad,
+    ].whereType<String>().join(' '),
+  );
 
   return switch (groupKey) {
-    'anillado' => text.contains('anil'),
-    'llenado' => text.contains('llenad'),
-    'rezago' => text.contains('rezag'),
+    'anillado' => _matchesAnilladoActivityText(text),
+    'llenado' => _matchesLlenadoActivityText(text),
+    'rezago' => _matchesRezagoActivityText(text),
     _ => false,
   };
 }
+
+bool _matchesRezagoActivityText(String text) {
+  return text.contains('rezag') ||
+      text.contains('rezad') ||
+      text.contains('resag');
+}
+
+bool _matchesAnilladoActivityText(String text) {
+  final hasAnilladoKey = text.contains('anill') ||
+      text.contains('anil') ||
+      text.contains('celof') ||
+      text.contains('sello') ||
+      text.contains('esponj') ||
+      text.contains('lamina') ||
+      text.contains('l mina');
+
+  if (hasAnilladoKey) {
+    return true;
+  }
+
+  return text.contains('sell') && !_matchesLlenadoActivityText(text);
+}
+
+bool _matchesLlenadoActivityText(String text) {
+  if (text.contains('anill') || text.contains('anil') || text.contains('celof')) {
+    return false;
+  }
+
+  return text.contains('llenad') ||
+      text.contains('kretek') ||
+      text.contains('petaca') ||
+      text.contains('sampler') ||
+      text.contains('display') ||
+      text.contains('bolsa') ||
+      text.contains('sellado') ||
+      text.contains('sell') ||
+      (text.contains('paquete') && text.contains('tubo'));
+}
+
+
+
 
 String dailyRecordsEmployeeGroupKey(DailyVinetaRegistroInfo record) {
   final employee = record.empleado;
@@ -5682,7 +6716,6 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
     super.initState();
     _load();
   }
-
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -6450,6 +7483,7 @@ class _DailyRecordsEmployeeRecordsPageState
     extends State<DailyRecordsEmployeeRecordsPage> {
   late DailyRecordsEmployeeSummary _summary;
   late List<DailyVinetaRegistroInfo> _records;
+  String? _expandedBrandKey;
   bool _loading = false;
   bool _changed = false;
   String? _error;
@@ -6460,7 +7494,6 @@ class _DailyRecordsEmployeeRecordsPageState
     _summary = widget.initialSummary;
     _records = List<DailyVinetaRegistroInfo>.of(widget.initialSummary.records);
   }
-
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -6474,7 +7507,7 @@ class _DailyRecordsEmployeeRecordsPageState
       );
       final updatedSummary = findDailyRecordsEmployeeSummary(
         dailyRecordsEmployeeSummaries(
-          dailyRecordsForActivityGroup(result.records, widget.activityGroupKey),
+          dailyRecordsForEmployeeGroup(result.records, widget.activityGroupKey),
         ),
         widget.initialSummary.key,
       );
@@ -6491,6 +7524,13 @@ class _DailyRecordsEmployeeRecordsPageState
               records: const [],
             );
         _records = List<DailyVinetaRegistroInfo>.of(_summary.records);
+
+        if (_expandedBrandKey != null &&
+            !dailyRecordsProductGroups(
+              _records,
+            ).any((group) => group.key == _expandedBrandKey)) {
+          _expandedBrandKey = null;
+        }
       });
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -6581,7 +7621,17 @@ class _DailyRecordsEmployeeRecordsPageState
               else
                 for (var index = 0; index < recordGroups.length; index++) ...[
                   DailyRecordsProductGroupCard(
+                    key: ValueKey('brand-group-${recordGroups[index].key}'),
                     group: recordGroups[index],
+                    expanded: _expandedBrandKey == recordGroups[index].key,
+                    onToggle: () {
+                      setState(() {
+                        _expandedBrandKey =
+                            _expandedBrandKey == recordGroups[index].key
+                            ? null
+                            : recordGroups[index].key;
+                      });
+                    },
                     children: [
                       for (final record in recordGroups[index].records)
                         Dismissible(
@@ -6722,17 +7772,25 @@ String? _dailyRecordsGroupMetaPart(String label, String? value) {
 class DailyRecordsProductGroupCard extends StatelessWidget {
   const DailyRecordsProductGroupCard({
     required this.group,
+    required this.expanded,
+    required this.onToggle,
     required this.children,
     super.key,
   });
 
   final DailyRecordsProductGroup group;
+  final bool expanded;
+  final VoidCallback onToggle;
   final List<Widget> children;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final meta = group.meta;
+    final vinetasLabel = group.records.length == 1 ? 'viñeta' : 'viñetas';
+    final actividadesLabel = group.totalActividades == 1
+        ? 'actividad'
+        : 'actividades';
 
     return Card(
       elevation: 0,
@@ -6742,80 +7800,106 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         side: BorderSide(color: palette.border),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 10, 10, 2),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: ValueKey('brand-accordion-${group.key}'),
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(18),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          group.title,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.text,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (meta.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            meta,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(
-                        group.title,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
+                        '${formatIntegerWithCommas(group.records.length)} $vinetasLabel',
                         style: TextStyle(
-                          color: palette.text,
-                          fontSize: 14,
+                          color: palette.muted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      Text(
+                        '${formatIntegerWithCommas(group.totalActividades)} $actividadesLabel',
+                        style: TextStyle(
+                          color: palette.primary,
+                          fontSize: 13,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      if (meta.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          meta,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      Text(
+                        '${formatIntegerWithCommas(group.totalPuros)} puros',
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w400,
                         ),
-                      ],
+                      ),
                     ],
                   ),
-                ),
-                const SizedBox(width: 10),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'Subtotal',
-                      style: TextStyle(
-                        color: palette.muted,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: palette.muted,
                     ),
-                    Text(
-                      '${formatIntegerWithCommas(group.totalActividades)} act',
-                      style: TextStyle(
-                        color: palette.primary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    Text(
-                      '${formatIntegerWithCommas(group.totalPuros)} puros',
-                      style: TextStyle(
-                        color: palette.muted,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
-            ...children,
-          ],
-        ),
+          ),
+          AnimatedCrossFade(
+            firstChild: const SizedBox(width: double.infinity),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: children,
+              ),
+            ),
+            crossFadeState: expanded
+                ? CrossFadeState.showSecond
+                : CrossFadeState.showFirst,
+            duration: const Duration(milliseconds: 180),
+          ),
+        ],
       ),
     );
   }
@@ -6848,6 +7932,23 @@ class DailyRecordsEmployeeSummary {
       0,
       (total, record) => total + record.totalActividades,
     );
+  }
+
+  int get totalMinutosTrabajados {
+    return records.fold<int>(
+      0,
+      (total, record) => total + (record.minutosTrabajados ?? 0),
+    );
+  }
+
+  String get totalMinutosTrabajadosTexto {
+    final minutes = totalMinutosTrabajados;
+    if (minutes <= 0) return '';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    if (h > 0 && m > 0) return '$h h $m min';
+    if (h > 0) return '$h h';
+    return '$m min';
   }
 
   String get displayCode => codigo.isEmpty ? 'N/A' : codigo;
@@ -6928,6 +8029,7 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
             DailyRecordsActivityGroupTabs(
               selectedKey: activityGroupKey,
               groupCounts: groupCounts,
+              options: dailyRecordsEmployeeGroups,
               onChanged: onActivityGroupChanged,
             ),
             const SizedBox(height: 12),
@@ -7189,28 +8291,28 @@ class DailyRecordsActivityGroupTabs extends StatelessWidget {
     required this.selectedKey,
     required this.groupCounts,
     required this.onChanged,
+    this.options = dailyRecordsActivityGroups,
     super.key,
   });
 
   final String selectedKey;
   final Map<String, int> groupCounts;
   final ValueChanged<String> onChanged;
+  final List<DailyRecordsActivityGroupOption> options;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
     return Row(
-      children: dailyRecordsActivityGroups
+      children: options
           .map((option) {
             final selected = option.key == selectedKey;
             final count = groupCounts[option.key] ?? 0;
 
             return Expanded(
               child: Padding(
-                padding: EdgeInsets.only(
-                  right: option == dailyRecordsActivityGroups.last ? 0 : 6,
-                ),
+                padding: EdgeInsets.only(right: option == options.last ? 0 : 6),
                 child: ChoiceChip(
                   selected: selected,
                   onSelected: (_) => onChanged(option.key),
@@ -7250,11 +8352,13 @@ class DailyRecordsActivityGroupTabs extends StatelessWidget {
 class DailyRecordsEmployeeTile extends StatelessWidget {
   const DailyRecordsEmployeeTile({
     required this.summary,
+    required this.position,
     required this.onTap,
     super.key,
   });
 
   final DailyRecordsEmployeeSummary summary;
+  final int position;
   final VoidCallback onTap;
 
   @override
@@ -7280,7 +8384,7 @@ class DailyRecordsEmployeeTile extends StatelessWidget {
                 backgroundColor: palette.primary,
                 foregroundColor: palette.onPrimary,
                 child: Text(
-                  summary.initial,
+                  '$position',
                   style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
               ),
@@ -7579,6 +8683,7 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
     );
   }
 }
+
 
 class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
   const DailyRecordsEmployeeRecordListCard({
@@ -8382,6 +9487,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
   late final TextEditingController _timeController;
   late DateTime _date;
   late String _mode;
+  ActivityInfo? _selectedActivity;
   bool _saving = false;
   String? _error;
 
@@ -8399,6 +9505,18 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
       text: record.minutosTrabajados?.toString() ?? '',
     );
     _timeController = TextEditingController(text: record.horaCorta);
+    _selectedActivity = ActivityInfo(
+      id: record.actividad.id,
+      apiIdActividad: record.actividad.apiIdActividad,
+      codigoActividad: record.actividad.codigoActividad,
+      nombre: record.actividad.nombre,
+      tipoEmpaque: record.actividad.tipoEmpaque,
+      precioMo: record.actividad.precioMo?.toString(),
+      productoId: record.producto.id,
+      codigoProducto: record.producto.codigoProducto,
+      item: record.producto.item,
+      productoNombre: record.producto.nombre,
+    );
   }
 
   @override
@@ -8427,7 +9545,33 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     });
   }
 
+  Future<void> _selectActivity() async {
+    FocusScope.of(context).unfocus();
+
+    final activity = await showModalBottomSheet<ActivityInfo>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => ActivitySearchSheet(
+        authApi: widget.authApi,
+        token: widget.token,
+        initialQuery: '',
+        generalCatalog: true,
+      ),
+    );
+
+    if (activity == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedActivity = activity;
+      _error = null;
+    });
+  }
+
   Future<void> _submit() async {
+    final activity = _selectedActivity;
     final employeeCode = _employeeController.text.trim();
     final quantity = int.tryParse(_quantityController.text.trim());
     final porHora = _mode == 'por_hora';
@@ -8438,6 +9582,13 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
         ? 0
         : int.tryParse(minutesText);
     final time = _timeController.text.trim();
+
+    if (activity == null || (activity.nombre?.trim().isEmpty ?? true)) {
+      setState(() {
+        _error = 'Selecciona una actividad del catalogo.';
+      });
+      return;
+    }
 
     if (employeeCode.isEmpty) {
       setState(() {
@@ -8483,6 +9634,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
         empleadoCodigo: employeeCode,
         modoRegistro: _mode,
         minutosTrabajados: minutes,
+        activity: activity,
       );
 
       if (!mounted) return;
@@ -8514,6 +9666,12 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     final palette = appPalette(context);
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final record = widget.record;
+    final selectedActivity = _selectedActivity;
+    final activityName = selectedActivity?.nombre?.trim();
+    final activityMeta = [
+      selectedActivity?.codigoActividad,
+      selectedActivity?.tipoEmpaque,
+    ].where((value) => value != null && value.trim().isNotEmpty).join(' · ');
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -8534,7 +9692,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                '${record.vinetaLabel} · ${record.activityLabel}',
+                '${record.vinetaLabel} · ${record.productTitle}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -8544,6 +9702,48 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
                 ),
               ),
               const SizedBox(height: 14),
+              InkWell(
+                key: const ValueKey('daily-record-activity-selector'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: _saving ? null : _selectActivity,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Actividad',
+                    prefixIcon: Icon(Icons.task_alt_rounded),
+                    suffixIcon: Icon(Icons.search_rounded),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        activityName == null || activityName.isEmpty
+                            ? 'Seleccionar del catalogo'
+                            : activityName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: activityName == null || activityName.isEmpty
+                              ? palette.errorText
+                              : palette.text,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      if (activityMeta.isNotEmpty)
+                        Text(
+                          activityMeta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
               InkWell(
                 borderRadius: BorderRadius.circular(18),
                 onTap: _saving ? null : _selectDate,
@@ -8694,8 +9894,18 @@ class SettingsHomeSection extends StatefulWidget {
   State<SettingsHomeSection> createState() => _SettingsHomeSectionState();
 }
 
+enum _ServerTestStatus { idle, testing, ok, fail }
+
 class _SettingsHomeSectionState extends State<SettingsHomeSection> {
-  late final TextEditingController _serverUrlController;
+  static const _okColor = Color(0xFF16A34A);
+
+  late final TextEditingController _serverUrl1Controller;
+  late final TextEditingController _serverUrl2Controller;
+  final Map<int, _ServerTestStatus> _testStatus = {
+    1: _ServerTestStatus.idle,
+    2: _ServerTestStatus.idle,
+  };
+  final Map<int, String> _testMessages = {};
   bool _saving = false;
   String? _message;
   String? _error;
@@ -8703,13 +9913,86 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
   @override
   void initState() {
     super.initState();
-    _serverUrlController = TextEditingController(text: widget.initialServerUrl);
+    _serverUrl1Controller = TextEditingController(
+      text: widget.initialServerUrl,
+    );
+    _serverUrl2Controller = TextEditingController();
+    unawaited(_loadSecondaryServerUrl());
   }
 
   @override
   void dispose() {
-    _serverUrlController.dispose();
+    _serverUrl1Controller.dispose();
+    _serverUrl2Controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadSecondaryServerUrl() async {
+    final storedServerUrl = await secureStorage.read(key: serverUrl2StorageKey);
+
+    if (!mounted || storedServerUrl == null || storedServerUrl.trim().isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _serverUrl2Controller.text = storedServerUrl;
+    });
+  }
+
+  bool _isTesting(int index) {
+    return _testStatus[index] == _ServerTestStatus.testing;
+  }
+
+  Future<void> _testServer(int index) async {
+    final controller = index == 1
+        ? _serverUrl1Controller
+        : _serverUrl2Controller;
+
+    if (_isTesting(index)) {
+      return;
+    }
+
+    setState(() {
+      _testStatus[index] = _ServerTestStatus.testing;
+      _testMessages.remove(index);
+      _message = null;
+      _error = null;
+    });
+
+    late final Uri uri;
+
+    try {
+      uri = normalizeApiBaseUriForInput(controller.text);
+    } on FormatException catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        _testStatus[index] = _ServerTestStatus.fail;
+        _testMessages[index] = error.message;
+      });
+
+      return;
+    }
+
+    try {
+      await http
+          .get(uri, headers: const {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 8));
+
+      if (!mounted) return;
+
+      setState(() {
+        _testStatus[index] = _ServerTestStatus.ok;
+        _testMessages[index] = 'Conexion exitosa.';
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _testStatus[index] = _ServerTestStatus.fail;
+        _testMessages[index] = 'Sin conexion con el servidor.';
+      });
+    }
   }
 
   Future<void> _save() async {
@@ -8726,13 +10009,31 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
     });
 
     try {
-      final normalized = await onServerUrlChanged(_serverUrlController.text);
+      final secondaryValue = _serverUrl2Controller.text.trim();
+      final normalizedSecondary = secondaryValue.isEmpty
+          ? null
+          : normalizeApiBaseUriForInput(secondaryValue).toString();
+      final normalizedPrimary = await onServerUrlChanged(
+        _serverUrl1Controller.text,
+      );
+
+      if (normalizedSecondary == null) {
+        await secureStorage.delete(key: serverUrl2StorageKey);
+      } else {
+        await secureStorage.write(
+          key: serverUrl2StorageKey,
+          value: normalizedSecondary,
+        );
+      }
 
       if (!mounted) return;
 
       setState(() {
-        _serverUrlController.text = normalized;
-        _message = 'Servidor actualizado.';
+        _serverUrl1Controller.text = normalizedPrimary;
+        if (normalizedSecondary != null) {
+          _serverUrl2Controller.text = normalizedSecondary;
+        }
+        _message = 'Servidores actualizados.';
       });
     } on FormatException catch (error) {
       if (!mounted) return;
@@ -8744,7 +10045,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo guardar la URL del servidor.';
+        _error = 'No se pudieron guardar las URLs del servidor.';
       });
     } finally {
       if (mounted) {
@@ -8753,6 +10054,94 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
         });
       }
     }
+  }
+
+  Widget _buildServerStatus(int index, AppPalette palette) {
+    final status = _testStatus[index] ?? _ServerTestStatus.idle;
+    final message = _testMessages[index];
+
+    return switch (status) {
+      _ServerTestStatus.idle => const SizedBox.shrink(),
+      _ServerTestStatus.testing => _ServerConnectionStatusLine(
+        icon: Icons.hourglass_top_rounded,
+        text: 'Probando conexion...',
+        color: palette.muted,
+      ),
+      _ServerTestStatus.ok => _ServerConnectionStatusLine(
+        icon: Icons.check_circle_outline_rounded,
+        text: message ?? 'Conexion exitosa.',
+        color: _okColor,
+      ),
+      _ServerTestStatus.fail => _ServerConnectionStatusLine(
+        icon: Icons.error_outline_rounded,
+        text: message ?? 'Sin conexion con el servidor.',
+        color: palette.errorText,
+      ),
+    };
+  }
+
+  Widget _buildServerField({
+    required int index,
+    required String title,
+    required String label,
+    required String hint,
+    required TextEditingController controller,
+    required AppPalette palette,
+  }) {
+    final testing = _isTesting(index);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            color: palette.text,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          keyboardType: TextInputType.url,
+          textInputAction: TextInputAction.done,
+          onChanged: (_) {
+            if (_testStatus[index] == _ServerTestStatus.idle) {
+              return;
+            }
+
+            setState(() {
+              _testStatus[index] = _ServerTestStatus.idle;
+              _testMessages.remove(index);
+            });
+          },
+          onSubmitted: (_) => unawaited(_testServer(index)),
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: hint,
+            prefixIcon: const Icon(Icons.link_rounded),
+            suffixIcon: Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: TextButton.icon(
+                onPressed: testing ? null : () => unawaited(_testServer(index)),
+                icon: testing
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.network_check_rounded, size: 18),
+                label: Text(testing ? 'Test' : 'Test'),
+              ),
+            ),
+            suffixIconConstraints: const BoxConstraints(minWidth: 94),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildServerStatus(index, palette),
+      ],
+    );
   }
 
   @override
@@ -8765,7 +10154,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
         SectionPlaceholderCard(
           icon: Icons.tune_rounded,
           title: 'Ajustes',
-          description: 'Configura la URL base del servidor Laravel.',
+          description: 'Configura las URLs base de los servidores Laravel.',
           color: palette.primary,
         ),
         const SizedBox(height: 12),
@@ -8782,7 +10171,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'URL del servidor',
+                  'Servidores',
                   style: TextStyle(
                     color: palette.text,
                     fontSize: 15,
@@ -8790,16 +10179,22 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: _serverUrlController,
-                  keyboardType: TextInputType.url,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => unawaited(_save()),
-                  decoration: const InputDecoration(
-                    labelText: 'Servidor API',
-                    hintText: 'https://tu-servidor.com/api',
-                    prefixIcon: Icon(Icons.link_rounded),
-                  ),
+                _buildServerField(
+                  index: 1,
+                  title: 'URL del servidor 1',
+                  label: 'Servidor API 1',
+                  hint: 'https://tu-servidor.com/api',
+                  controller: _serverUrl1Controller,
+                  palette: palette,
+                ),
+                const SizedBox(height: 16),
+                _buildServerField(
+                  index: 2,
+                  title: 'URL del servidor 2',
+                  label: 'Servidor API 2',
+                  hint: 'http://192.168.2.7:8081/api',
+                  controller: _serverUrl2Controller,
+                  palette: palette,
                 ),
                 const SizedBox(height: 10),
                 if (_message != null)
@@ -8827,6 +10222,40 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
                   label: Text(_saving ? 'Guardando...' : 'Guardar servidor'),
                 ),
               ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ServerConnectionStatusLine extends StatelessWidget {
+  const _ServerConnectionStatusLine({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: color),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
@@ -8926,10 +10355,17 @@ class AppScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final rolesLabel = user.roles.isEmpty ? 'Sin rol' : user.roles.join(', ');
+    final barColor = palette.isDark
+        ? const Color(0xFF0F172A)
+        : const Color(0xFF111827);
 
     return Scaffold(
-      backgroundColor: palette.scaffold,
+      backgroundColor: barColor,
       appBar: AppBar(
+        backgroundColor: palette.isDark ? appDarkPanel : Colors.white,
+        foregroundColor: palette.isDark ? Colors.white : palette.text,
+        elevation: 0,
+        surfaceTintColor: Colors.transparent,
         title: Row(
           children: [
             AppUserAvatar(user: user),
@@ -8943,7 +10379,8 @@ class AppScaffold extends StatelessWidget {
                     user.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
+                      color: palette.isDark ? Colors.white : palette.text,
                       fontSize: 16,
                       fontWeight: FontWeight.w900,
                     ),
@@ -8954,9 +10391,9 @@ class AppScaffold extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).appBarTheme.foregroundColor?.withValues(alpha: 0.78),
+                      color: palette.isDark
+                          ? Colors.white.withValues(alpha: 0.78)
+                          : palette.muted,
                       fontSize: 11.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -8967,28 +10404,30 @@ class AppScaffold extends StatelessWidget {
           ],
         ),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: ThemeToggleButton(
-              isDarkMode: isDarkMode,
-              onPressed: onToggleTheme,
-              compact: true,
-            ),
+          ThemeToggleButton(
+            isDarkMode: isDarkMode,
+            onPressed: onToggleTheme,
+            compact: true,
           ),
           IconButton(
-            tooltip: 'Cerrar sesion',
+            tooltip: 'Cerrar sesión',
             onPressed: onLogout,
-            icon: const Icon(Icons.logout_rounded),
+            icon: const Icon(Icons.logout_rounded, size: 22),
+            color: palette.isDark
+                ? Colors.white.withValues(alpha: 0.85)
+                : palette.text.withValues(alpha: 0.85),
           ),
+          const SizedBox(width: 4),
         ],
       ),
-      body: ColoredBox(color: palette.scaffold, child: child),
+      extendBody: true,
+      body: ColoredBox(
+        color: palette.scaffold,
+        child: child,
+      ),
       bottomNavigationBar: bottomNavigationBar == null
           ? null
-          : ColoredBox(
-              color: palette.scaffold,
-              child: RepaintBoundary(child: bottomNavigationBar!),
-            ),
+          : RepaintBoundary(child: bottomNavigationBar!),
     );
   }
 }
@@ -9004,8 +10443,8 @@ class AppUserAvatar extends StatelessWidget {
     final palette = appPalette(context);
     final initials = Text(
       user.initials,
-      style: const TextStyle(
-        color: Colors.white,
+      style: TextStyle(
+        color: palette.isDark ? Colors.white : palette.primary,
         fontSize: 13,
         fontWeight: FontWeight.w900,
       ),
@@ -9017,8 +10456,14 @@ class AppUserAvatar extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.white.withValues(alpha: 0.16),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.24)),
+        color: palette.isDark
+            ? Colors.white.withValues(alpha: 0.16)
+            : palette.primary.withValues(alpha: 0.12),
+        border: Border.all(
+          color: palette.isDark
+              ? Colors.white.withValues(alpha: 0.24)
+              : palette.primary.withValues(alpha: 0.28),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: photoUrl == null
@@ -9035,10 +10480,108 @@ class AppUserAvatar extends StatelessWidget {
               },
               errorBuilder: (_, _, _) => ColoredBox(
                 color: palette.primary.withValues(alpha: 0.85),
-                child: Center(child: initials),
+                child: Center(
+                  child: Text(
+                    user.initials,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
               ),
             ),
     );
+  }
+}
+
+class ConcaveCurvedBottomMenuPainter extends CustomPainter {
+  const ConcaveCurvedBottomMenuPainter({
+    required this.color,
+    required this.radius,
+    required this.topBorderColor,
+    required this.shadowColor,
+  });
+
+  final Color color;
+  final double radius;
+  final Color topBorderColor;
+  final Color shadowColor;
+
+  Path _buildPath(Size size) {
+    final w = size.width;
+    final h = size.height;
+    final r = radius;
+
+    final path = Path();
+    path.moveTo(0, 0);
+    path.arcToPoint(
+      Offset(r, r),
+      radius: Radius.circular(r),
+      clockwise: false,
+    );
+    path.lineTo(w - r, r);
+    path.arcToPoint(
+      Offset(w, 0),
+      radius: Radius.circular(r),
+      clockwise: false,
+    );
+    path.lineTo(w, h);
+    path.lineTo(0, h);
+    path.close();
+
+    return path;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = _buildPath(size);
+
+    // Draw shadow
+    if (shadowColor.a > 0) {
+      final shadowPaint = Paint()
+        ..color = shadowColor
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+      canvas.drawPath(path.shift(const Offset(0, -3)), shadowPaint);
+    }
+
+    // Draw fill
+    final fillPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(path, fillPaint);
+
+    // Draw top border line
+    if (topBorderColor.a > 0) {
+      final borderPath = Path();
+      borderPath.moveTo(0, 0);
+      borderPath.arcToPoint(
+        Offset(radius, radius),
+        radius: Radius.circular(radius),
+        clockwise: false,
+      );
+      borderPath.lineTo(size.width - radius, radius);
+      borderPath.arcToPoint(
+        Offset(size.width, 0),
+        radius: Radius.circular(radius),
+        clockwise: false,
+      );
+
+      final borderPaint = Paint()
+        ..color = topBorderColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2;
+      canvas.drawPath(borderPath, borderPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ConcaveCurvedBottomMenuPainter oldDelegate) {
+    return oldDelegate.color != color ||
+        oldDelegate.radius != radius ||
+        oldDelegate.topBorderColor != topBorderColor ||
+        oldDelegate.shadowColor != shadowColor;
   }
 }
 
@@ -9058,97 +10601,55 @@ class MobileHomeBottomMenu extends StatelessWidget {
       ? HomeMenuSection.values
       : const [HomeMenuSection.scan, HomeMenuSection.records];
 
-  int get _selectedIndex {
-    final index = _sections.indexOf(selected);
-
-    return index >= 0 ? index : 0;
-  }
-
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final sections = _sections;
-    final selectedIndex = _selectedIndex;
-    final barColor = palette.isDark ? palette.surfaceSoft : palette.surface;
-    final activeColor = palette.primary;
-    final selectedTextColor = palette.onPrimary;
-    final unselectedColor = palette.isDark
-        ? palette.text.withValues(alpha: 0.7)
-        : palette.muted;
+    final barColor = palette.isDark
+        ? const Color(0xFF0F172A)
+        : const Color(0xFF111827);
+    final selectedColor = palette.isDark
+        ? const Color(0xFF38BDF8)
+        : Colors.white;
+    const unselectedColor = Color(0xFF64748B);
+    const curveRadius = 24.0;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
+    return CustomPaint(
+      painter: ConcaveCurvedBottomMenuPainter(
         color: barColor,
-        border: Border(
-          top: BorderSide(
-            color: palette.isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : palette.border,
-          ),
+        radius: curveRadius,
+        topBorderColor: Colors.white.withValues(
+          alpha: palette.isDark ? 0.12 : 0.08,
+        ),
+        shadowColor: Colors.black.withValues(
+          alpha: palette.isDark ? 0.40 : 0.20,
         ),
       ),
       child: SafeArea(
         top: false,
         left: false,
         right: false,
-        minimum: EdgeInsets.zero,
-        child: SizedBox(
-          height: 70,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              const horizontalPadding = 6.0;
-              final availableWidth =
-                  constraints.maxWidth - horizontalPadding * 2;
-              final itemWidth = availableWidth / sections.length;
-              final indicatorWidth = (itemWidth - 4)
-                  .clamp(56.0, 126.0)
-                  .toDouble();
-              final indicatorLeft =
-                  horizontalPadding +
-                  itemWidth * selectedIndex +
-                  (itemWidth - indicatorWidth) / 2;
-
-              return Stack(
-                children: [
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 280),
-                    curve: Curves.easeOutCubic,
-                    left: indicatorLeft,
-                    top: 6,
-                    bottom: 6,
-                    width: indicatorWidth,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      curve: Curves.easeOutCubic,
-                      decoration: BoxDecoration(
-                        color: activeColor,
-                        borderRadius: BorderRadius.circular(19),
-                      ),
-                    ),
+        child: Container(
+          height: 62 + curveRadius,
+          padding: const EdgeInsets.only(
+            top: curveRadius,
+            left: 8,
+            right: 8,
+            bottom: 4,
+          ),
+          child: Row(
+            children: sections
+                .map(
+                  (section) => _MobileHomeBottomItem(
+                    icon: section.icon,
+                    label: section.label,
+                    selected: selected == section,
+                    selectedColor: selectedColor,
+                    unselectedColor: unselectedColor,
+                    onTap: () => onChanged(section),
                   ),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: horizontalPadding,
-                      vertical: 6,
-                    ),
-                    child: Row(
-                      children: sections
-                          .map(
-                            (section) => _MobileHomeBottomItem(
-                              icon: section.icon,
-                              label: section.label,
-                              selected: selected == section,
-                              selectedTextColor: selectedTextColor,
-                              unselectedColor: unselectedColor,
-                              onTap: () => onChanged(section),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ),
-                ],
-              );
-            },
+                )
+                .toList(growable: false),
           ),
         ),
       ),
@@ -9161,7 +10662,7 @@ class _MobileHomeBottomItem extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.selected,
-    required this.selectedTextColor,
+    required this.selectedColor,
     required this.unselectedColor,
     required this.onTap,
   });
@@ -9169,13 +10670,13 @@ class _MobileHomeBottomItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool selected;
-  final Color selectedTextColor;
+  final Color selectedColor;
   final Color unselectedColor;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final targetColor = selected ? selectedTextColor : unselectedColor;
+    final targetColor = selected ? selectedColor : unselectedColor;
 
     return Expanded(
       child: Padding(
@@ -9190,46 +10691,41 @@ class _MobileHomeBottomItem extends StatelessWidget {
             builder: (context, color, _) {
               final resolvedColor = color ?? targetColor;
 
-              return AnimatedScale(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                scale: selected ? 1.04 : 1,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    AnimatedScale(
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      scale: selected ? 1.08 : 1,
-                      child: Icon(
-                        icon,
-                        color: resolvedColor,
-                        size: selected ? 21 : 20,
-                      ),
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedScale(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    scale: selected ? 1.12 : 1.0,
+                    child: Icon(
+                      icon,
+                      color: resolvedColor,
+                      size: 22,
                     ),
-                    const SizedBox(height: 3),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: resolvedColor,
-                            fontSize: selected ? 10.8 : 10.2,
-                            height: 1.05,
-                            fontWeight: selected
-                                ? FontWeight.w900
-                                : FontWeight.w700,
-                            letterSpacing: selected ? 0.12 : 0,
-                          ),
+                  ),
+                  const SizedBox(height: 3),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: resolvedColor,
+                          fontSize: selected ? 11.2 : 10.4,
+                          height: 1.1,
+                          fontWeight: selected
+                              ? FontWeight.w900
+                              : FontWeight.w600,
+                          letterSpacing: selected ? 0.2 : 0,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               );
             },
           ),
@@ -10857,62 +12353,28 @@ ActivityInfo? _suggestActivityForEmployee(
   }
 
   if (_employeeUsesRezagoOverride(employee)) {
-    return _bestActivityMatchByName(activities, const [
-      'rezagado family',
-      'rezagado',
-      'rezag',
-    ]);
+    return _bestMultiScanActivityMatch(activities, VinetaProcessGroup.rezago);
+  }
+
+  final group = _multiScanActivityGroupForEmployee(employee);
+  if (group != null) {
+    final groupMatch = _bestMultiScanActivityMatch(activities, group);
+    if (groupMatch != null) {
+      return groupMatch;
+    }
   }
 
   final role = _normalizeForMatch(
     [employee.cargo, employee.area].nonNulls.join(' '),
   );
 
-  if (role.isEmpty) {
-    return null;
-  }
-
-  if (role.contains('llenad')) {
-    return _bestActivityMatchByName(activities, const [
-      'llenado paquetes',
-      'llenado cajas',
-      'llenado',
-    ]);
-  }
-
-  if (role.contains('rezag')) {
-    return _bestActivityMatchByName(activities, const [
-      'rezagado family',
-      'rezagado',
-      'rezag',
-    ]);
-  }
-
-  if (role.contains('anill') || role.contains('celofan')) {
-    return _bestActivityMatchByName(
-      activities,
-      const [
-        'anillo celofan cello',
-        'anillo celofan',
-        'anillado',
-        'celofanado',
-        'celofan',
-        'anillo',
-      ],
-      excludedTerms: const ['llenado', 'rezag'],
-    );
-  }
-
-  if (role.contains('sell')) {
-    return _bestActivityMatchByName(activities, const ['sellado', 'sello']);
-  }
-
   if (role.contains('limpia')) {
     return _bestActivityMatchByName(activities, const ['limpieza', 'limpiado']);
   }
 
-  return null;
+  return activities.firstOrNull;
 }
+
 
 bool _employeeUsesRezagoOverride(EmployeeInfo employee) {
   final code = employee.codigo.trim();
@@ -10957,17 +12419,22 @@ VinetaProcessGroup? _multiScanActivityGroupForEmployee(EmployeeInfo employee) {
     [employee.cargo, employee.area].nonNulls.join(' '),
   );
 
-  if (role.contains('llenad')) {
-    return VinetaProcessGroup.llenado;
-  }
-
   if (role.contains('rezag')) {
     return VinetaProcessGroup.rezago;
   }
 
+  if (role.contains('llenad') ||
+      role.contains('sell') ||
+      role.contains('display') ||
+      role.contains('petaca') ||
+      role.contains('sampler') ||
+      role.contains('bolsa') ||
+      role.contains('kretek')) {
+    return VinetaProcessGroup.llenado;
+  }
+
   if (role.contains('anill') ||
-      role.contains('celofan') ||
-      role.contains('sell')) {
+      role.contains('celofan')) {
     return VinetaProcessGroup.anillado;
   }
 
@@ -11012,16 +12479,27 @@ List<String> _multiScanActivityQueries(VinetaProcessGroup group) {
       'anillo',
       'celofan',
       'sello',
+      'esponja',
+      'lamina',
     ],
-    VinetaProcessGroup.llenado => const ['llenado'],
+    VinetaProcessGroup.llenado => const [
+      'llenado',
+      'kretek',
+      'sellado',
+      'display',
+      'bolsa',
+      'petaca',
+      'sampler',
+    ],
   };
 }
 
 ActivityInfo? _bestMultiScanActivityMatch(
   List<ActivityInfo> activities,
-  VinetaProcessGroup group,
-) {
-  final filteredActivities = activities
+  VinetaProcessGroup group, {
+  VinetaProcessInfo? process,
+}) {
+  var filteredActivities = activities
       .where((activity) => activity.processGroup == group)
       .toList(growable: false);
 
@@ -11029,31 +12507,142 @@ ActivityInfo? _bestMultiScanActivityMatch(
     return null;
   }
 
-  final bestMatch = switch (group) {
-    VinetaProcessGroup.rezago => _bestActivityMatchByName(
-      filteredActivities,
-      const ['rezagado family', 'rezagado', 'rezag'],
-    ),
-    VinetaProcessGroup.anillado => _bestActivityMatchByName(
-      filteredActivities,
-      const [
-        'anillo celofan cello',
-        'anillo celofan',
-        'anillado',
-        'celofanado',
-        'celofan',
-        'sello',
-        'anillo',
-      ],
-      excludedTerms: const ['llenado', 'rezag'],
-    ),
-    VinetaProcessGroup.llenado => _bestActivityMatchByName(
-      filteredActivities,
-      const ['llenado paquetes', 'llenado cajas', 'llenado'],
-    ),
-  };
+  if (group == VinetaProcessGroup.llenado && process != null) {
+    final uncompletedActivities = filteredActivities
+        .where(
+          (act) => multiScanActivityErrorForProcess(act, process) == null,
+        )
+        .toList(growable: false);
 
-  return bestMatch ?? filteredActivities.first;
+    if (uncompletedActivities.isNotEmpty) {
+      filteredActivities = uncompletedActivities;
+    }
+  }
+
+  // La API entrega las actividades activas ordenadas por el escaneo más reciente primero (ultimo_escaneo_en DESC).
+  // Por lo tanto, la primera actividad en filteredActivities es la actividad escaneada más reciente para este grupo.
+  return filteredActivities.firstOrNull;
+}
+
+
+
+VinetaProcessStepActivityInfo? _findCompletedActivityInStep(
+  VinetaProcessStepInfo step,
+  ActivityInfo activity,
+) {
+  final targetName = _normalizeForMatch(activity.nombre ?? '');
+  final targetCode = _normalizeForMatch(activity.codigoActividad ?? '');
+
+  for (final item in step.allActivities) {
+    if (item.id != null && item.id == activity.id) {
+      return item;
+    }
+    if (item.apiId != null &&
+        activity.apiIdActividad != null &&
+        item.apiId == activity.apiIdActividad) {
+      return item;
+    }
+    if (targetCode.isNotEmpty &&
+        item.codigo != null &&
+        _normalizeForMatch(item.codigo!) == targetCode) {
+      return item;
+    }
+    if (targetName.isNotEmpty &&
+        _normalizeForMatch(item.nombre) == targetName) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+String? multiScanActivityErrorForProcess(
+  ActivityInfo activity,
+  VinetaProcessInfo process,
+) {
+  final group = activity.processGroup;
+
+  if (group == null) {
+    return null;
+  }
+
+  if (group == VinetaProcessGroup.llenado) {
+    final step = _completedProcessStepForGroup(process, group);
+    if (step == null || !step.completed) {
+      return null;
+    }
+
+    final matchingActivity = _findCompletedActivityInStep(step, activity);
+    if (matchingActivity != null) {
+      final employee = matchingActivity.empleado?.trim();
+      final date = matchingActivity.fecha?.trim();
+      final details = [
+        if (employee != null && employee.isNotEmpty) employee,
+        if (date != null && date.isNotEmpty) date,
+      ].join(' · ');
+
+      final activityName = matchingActivity.nombre.isNotEmpty
+          ? matchingActivity.nombre
+          : (activity.nombre ?? 'Llenado');
+
+      return details.isEmpty
+          ? 'La actividad "$activityName" ya esta registrada para esta viñeta.'
+          : 'La actividad "$activityName" ya esta registrada: $details.';
+    }
+
+    return null;
+  }
+
+  final completedStep = _completedProcessStepForGroup(process, group);
+
+  if (completedStep != null) {
+    return _completedProcessMessage(completedStep);
+  }
+
+  return null;
+}
+
+
+int multiScanActivityMultiplier(String? activityName) {
+  final name = activityName?.trim() ?? '';
+
+  if (name.isEmpty) {
+    return 1;
+  }
+
+  var total = 0;
+
+  for (final value in name.split(RegExp(r'\s*,\s*'))) {
+    final part = value.trim();
+
+    if (part.isEmpty) {
+      continue;
+    }
+
+    final match = RegExp(r'^(\d+)\s+').firstMatch(part);
+    final quantity = match == null ? null : int.tryParse(match.group(1)!);
+
+    total += quantity != null && quantity > 0 ? quantity : 1;
+  }
+
+  return total > 0 ? total : 1;
+}
+
+int multiScanPendingActivities({
+  required String quantityText,
+  required ActivityInfo? activity,
+}) {
+  final quantity = int.tryParse(quantityText.trim());
+  final activityName = activity?.nombre?.trim();
+
+  if (quantity == null ||
+      quantity <= 0 ||
+      activityName == null ||
+      activityName.isEmpty) {
+    return 0;
+  }
+
+  return quantity * multiScanActivityMultiplier(activityName);
 }
 
 int? _parseHoursToMinutes(String value) {
@@ -11125,8 +12714,10 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
   late DateTime _scanDateTime;
   EmployeeInfo? _employee;
+  ActivityInfo? _globalActivity;
   DailyWorkSummaryInfo? _dailySummary;
   List<_MultiVinetaEntry> _entries = const [];
+  bool _taskMode = true;
   bool _loadingEmployee = false;
   bool _loadingDailySummary = false;
   bool _processingScan = false;
@@ -11152,6 +12743,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     final remembered = _rememberedVinetaRegistro;
 
     if (remembered != null) {
+      _taskMode = remembered.taskMode;
       _employee = remembered.employee;
       _employeeCodeController.text = remembered.employee.codigo;
       _quantityController.text = remembered.cantidadPuros.toString();
@@ -11184,6 +12776,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     _cameraRestartRequestId++;
     setState(() {
       _employee = null;
+      _globalActivity = null;
       _dailySummary = null;
       _dailySummaryError = null;
       _entries = const [];
@@ -11267,6 +12860,21 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     });
   }
 
+  void _setTaskMode(bool value) {
+    if (_saving || _taskMode == value) {
+      return;
+    }
+
+    setState(() {
+      _taskMode = value;
+      _saveError = null;
+
+      if (!value) {
+        _hoursController.clear();
+      }
+    });
+  }
+
   Future<void> _scanEmployee() async {
     final employee = await Navigator.of(context).push<EmployeeInfo>(
       MaterialPageRoute(
@@ -11300,6 +12908,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
       if (changedEmployee) {
         _entries = const [];
+        _globalActivity = null;
       }
 
       _cameraMinimized = false;
@@ -11491,8 +13100,9 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
   Future<ActivityInfo?> _multiScanActivityForEmployee(
     EmployeeInfo employee,
-    List<ActivityInfo> productActivities,
-  ) async {
+    List<ActivityInfo> productActivities, {
+    VinetaProcessInfo? process,
+  }) async {
     final group = _multiScanActivityGroupForEmployee(employee);
 
     if (group == null) {
@@ -11502,6 +13112,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     final productActivity = _bestMultiScanActivityMatch(
       productActivities,
       group,
+      process: process,
     );
 
     if (productActivity != null) {
@@ -11513,7 +13124,11 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         widget.token,
         query: query,
       );
-      final fallbackActivity = _bestMultiScanActivityMatch(activities, group);
+      final fallbackActivity = _bestMultiScanActivityMatch(
+        activities,
+        group,
+        process: process,
+      );
 
       if (fallbackActivity != null) {
         return fallbackActivity;
@@ -11588,43 +13203,75 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
       if (!mounted) return;
 
-      ActivityInfo? activity;
+      ActivityInfo? activity = _globalActivity;
       final process = vineta.process;
-      final group = _multiScanActivityGroupForEmployee(employee);
+      final employeeGroup = _multiScanActivityGroupForEmployee(employee);
       String? entryError;
 
-      if (group == null) {
-        entryError = 'No hay grupo de actividad para este cargo.';
-      } else {
-        final completedStep = _completedProcessStepForGroup(process, group);
+      if (activity == null) {
+        if (employeeGroup == null) {
+          entryError = 'No hay grupo de actividad para este cargo.';
+        } else if (employeeGroup == VinetaProcessGroup.llenado) {
+          try {
+            activity = await _multiScanActivityForEmployee(
+              employee,
+              activities,
+              process: process,
+            );
+          } on ApiException catch (error) {
+            activityLoadError = error.message;
+          } catch (_) {
+            activityLoadError = 'No se pudo buscar actividad relacionada.';
+          }
 
-        if (completedStep != null) {
-          setState(() {
-            _scanError = _completedProcessMessage(completedStep);
-          });
-          return;
-        }
+          if (!mounted) return;
 
-        try {
-          activity = await _multiScanActivityForEmployee(employee, activities);
-        } on ApiException catch (error) {
-          activityLoadError = error.message;
-        } catch (_) {
-          activityLoadError = 'No se pudo buscar actividad relacionada.';
-        }
+          if (activity == null) {
+            final groupLabel = _multiScanActivityGroupLabel(employeeGroup);
+            entryError = activityLoadError == null
+                ? 'No se encontro actividad de $groupLabel.'
+                : 'No se encontro actividad de $groupLabel. $activityLoadError';
+          }
+        } else {
+          final completedStep = _completedProcessStepForGroup(
+            process,
+            employeeGroup,
+          );
 
-        if (!mounted) return;
+          if (completedStep != null) {
+            setState(() {
+              _scanError = _completedProcessMessage(completedStep);
+            });
+            return;
+          }
 
-        if (activity == null) {
-          final groupLabel = _multiScanActivityGroupLabel(group);
-          entryError = activityLoadError == null
-              ? 'No se encontro actividad de $groupLabel.'
-              : 'No se encontro actividad de $groupLabel. $activityLoadError';
-        } else if (activity.processGroup == VinetaProcessGroup.llenado &&
-            !process.canFill) {
-          entryError = process.fillBlockMessage;
+          try {
+            activity = await _multiScanActivityForEmployee(
+              employee,
+              activities,
+              process: process,
+            );
+          } on ApiException catch (error) {
+            activityLoadError = error.message;
+          } catch (_) {
+            activityLoadError = 'No se pudo buscar actividad relacionada.';
+          }
+
+          if (!mounted) return;
+
+          if (activity == null) {
+            final groupLabel = _multiScanActivityGroupLabel(employeeGroup);
+            entryError = activityLoadError == null
+                ? 'No se encontro actividad de $groupLabel.'
+                : 'No se encontro actividad de $groupLabel. $activityLoadError';
+          }
         }
       }
+
+      if (activity != null) {
+        entryError = multiScanActivityErrorForProcess(activity, process);
+      }
+
 
       final entry = _MultiVinetaEntry(
         key: key,
@@ -11687,9 +13334,12 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     final pendingEntries = _entries
         .where((entry) => !entry.saved)
         .toList(growable: false);
-    final totalMinutes = _parseHoursToMinutes(_hoursController.text);
+    final totalMinutes = _taskMode
+        ? _parseHoursToMinutes(_hoursController.text)
+        : null;
     final splitMinutes =
-        totalMinutes != null &&
+        _taskMode &&
+            totalMinutes != null &&
             totalMinutes > 0 &&
             pendingEntries.isNotEmpty &&
             totalMinutes >= pendingEntries.length
@@ -11753,6 +13403,63 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     _replaceEntry(entry.key, entry.copyWith(cantidadText: value.trim()));
   }
 
+  Future<ActivityInfo?> _pickMultiScanActivity(
+    VinetaProcessGroup? group, {
+    bool generalCatalog = false,
+  }) {
+    return showModalBottomSheet<ActivityInfo>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => ActivitySearchSheet(
+        authApi: widget.authApi,
+        token: widget.token,
+        initialQuery: group == null
+            ? ''
+            : _multiScanActivityQueries(group).first,
+        allowedProcessGroup: generalCatalog ? null : group,
+        generalCatalog: generalCatalog,
+      ),
+    );
+  }
+
+  Future<void> _searchGlobalActivity() async {
+    final employee = _employee;
+
+    if (employee == null || _saving) {
+      return;
+    }
+
+    final activity = await _pickMultiScanActivity(null, generalCatalog: true);
+
+    if (activity == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _globalActivity = activity;
+      _saveError = null;
+      _entries = _entries
+          .map((entry) {
+            if (entry.saved || entry.saving) {
+              return entry;
+            }
+
+            final error = multiScanActivityErrorForProcess(
+              activity,
+              entry.process,
+            );
+
+            return entry.copyWith(
+              activity: activity,
+              error: error,
+              clearError: error == null,
+            );
+          })
+          .toList(growable: false);
+    });
+  }
+
   Future<void> _searchActivity(_MultiVinetaEntry entry) async {
     final employee = _employee;
 
@@ -11760,41 +13467,13 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       return;
     }
 
-    final group = _multiScanActivityGroupForEmployee(employee);
-
-    if (group == null) {
-      _showMessage('No hay grupo de actividad para el cargo de este empleado.');
-      return;
-    }
-
-    final activity = await showModalBottomSheet<ActivityInfo>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (_) => ActivitySearchSheet(
-        authApi: widget.authApi,
-        token: widget.token,
-        initialQuery: _multiScanActivityQueries(group).first,
-        allowedProcessGroup: group,
-      ),
-    );
+    final activity = await _pickMultiScanActivity(null, generalCatalog: true);
 
     if (activity == null || !mounted) {
       return;
     }
 
-    if (activity.processGroup != group) {
-      _showMessage(
-        'Selecciona una actividad de ${_multiScanActivityGroupLabel(group)}.',
-      );
-      return;
-    }
-
-    final error =
-        activity.processGroup == VinetaProcessGroup.llenado &&
-            !entry.process.canFill
-        ? entry.process.fillBlockMessage
-        : null;
+    final error = multiScanActivityErrorForProcess(activity, entry.process);
 
     _replaceEntry(
       entry.key,
@@ -11814,6 +13493,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     _cameraRestartRequestId++;
     setState(() {
       _employee = null;
+      _globalActivity = null;
       _employeeCodeController.clear();
       _employeeError = null;
       _dailySummary = null;
@@ -11834,6 +13514,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
     setState(() {
       _entries = const [];
+      _globalActivity = null;
       _scanError = null;
       _scanNotice = null;
       _saveError = null;
@@ -11862,19 +13543,26 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       return;
     }
 
-    final hoursText = _hoursController.text.trim();
-    final totalMinutes = hoursText.isEmpty
-        ? 0
-        : _parseHoursToMinutes(hoursText);
+    final taskMode = _taskMode;
+    var totalMinutes = 0;
 
-    if (totalMinutes == null || totalMinutes < 0) {
-      _showMessage('Ingresa una hora valida. Usa 1.5 o 1:30.');
-      return;
-    }
+    if (taskMode) {
+      final hoursText = _hoursController.text.trim();
+      final parsedMinutes = hoursText.isEmpty
+          ? 0
+          : _parseHoursToMinutes(hoursText);
 
-    if (totalMinutes > 0 && totalMinutes < pendingEntries.length) {
-      _showMessage('La hora total debe dejar al menos 1 minuto por viñeta.');
-      return;
+      if (parsedMinutes == null || parsedMinutes < 0) {
+        _showMessage('Ingresa una hora valida. Usa 1.5 o 1:30.');
+        return;
+      }
+
+      if (parsedMinutes > 0 && parsedMinutes < pendingEntries.length) {
+        _showMessage('La hora total debe dejar al menos 1 minuto por viñeta.');
+        return;
+      }
+
+      totalMinutes = parsedMinutes;
     }
 
     for (final entry in pendingEntries) {
@@ -11891,9 +13579,15 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       }
     }
 
-    final minutesByEntry = totalMinutes > 0
+    final splitMinutes = taskMode && totalMinutes > 0
         ? _splitMinutesAcrossVinetas(totalMinutes, pendingEntries.length)
-        : List<int>.filled(pendingEntries.length, 0, growable: false);
+        : const <int>[];
+    final minutesByEntry = List<int?>.generate(
+      pendingEntries.length,
+      (index) =>
+          taskMode ? (splitMinutes.isEmpty ? 0 : splitMinutes[index]) : null,
+      growable: false,
+    );
     final quantitiesByEntry = pendingEntries
         .map((entry) => int.parse(entry.cantidadText.trim()))
         .toList(growable: false);
@@ -11926,7 +13620,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
           cantidadPuros: quantitiesByEntry[index],
           minutosTrabajados: minutesByEntry[index],
           registradoEn: _scanDateTime,
-          taskMode: true,
+          taskMode: taskMode,
         );
 
         if (!mounted) return;
@@ -11949,8 +13643,8 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       _rememberVinetaRegistro(
         employee: employee,
         cantidadPuros: quantitiesByEntry.first,
-        minutosTrabajados: totalMinutes,
-        taskMode: true,
+        minutosTrabajados: taskMode ? totalMinutes : null,
+        taskMode: taskMode,
       );
 
       if (!mounted) return;
@@ -12490,6 +14184,8 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   }
 
   Widget _buildGlobalFieldsCard(AppPalette palette) {
+    final globalActivityName = _globalActivity?.nombre?.trim();
+
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
@@ -12506,6 +14202,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
             Row(
               children: [
                 Expanded(
+                  flex: 5,
                   child: TextField(
                     controller: _quantityController,
                     keyboardType: TextInputType.number,
@@ -12516,21 +14213,81 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 5),
+                TaskModeCheck(
+                  key: const ValueKey('multi-scan-task-mode'),
+                  value: _taskMode,
+                  onChanged: _setTaskMode,
+                ),
+                const SizedBox(width: 5),
                 Expanded(
-                  child: TextField(
-                    controller: _hoursController,
-                    keyboardType: TextInputType.datetime,
-                    textInputAction: TextInputAction.done,
-                    onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Hora total',
-                      hintText: 'Opcional',
-                      prefixIcon: Icon(Icons.schedule_rounded),
-                    ),
-                  ),
+                  flex: 4,
+                  child: _taskMode
+                      ? TextField(
+                          key: const ValueKey('multi-scan-total-hours'),
+                          controller: _hoursController,
+                          keyboardType: TextInputType.datetime,
+                          textInputAction: TextInputAction.done,
+                          onChanged: (_) => setState(() {}),
+                          decoration: const InputDecoration(
+                            labelText: 'Hora total',
+                            hintText: 'Opcional',
+                            prefixIcon: Icon(Icons.schedule_rounded),
+                          ),
+                        )
+                      : DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: palette.surfaceSoft,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 12,
+                            ),
+                            child: Text(
+                              'Sin minutos',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.muted,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: _saving ? null : _searchGlobalActivity,
+              child: InputDecorator(
+                decoration: InputDecoration(
+                  labelText: 'Actividad global',
+                  prefixIcon: const Icon(Icons.task_alt_rounded),
+                  suffixIcon: const Icon(Icons.search_rounded),
+                  enabled: !_saving,
+                ),
+                child: Text(
+                  globalActivityName == null || globalActivityName.isEmpty
+                      ? 'Automatica segun empleado'
+                      : globalActivityName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color:
+                        globalActivityName == null || globalActivityName.isEmpty
+                        ? palette.muted
+                        : palette.text,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
             ),
             if (_saveError != null) ...[
               const SizedBox(height: 8),
@@ -12553,7 +14310,16 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         .toList(growable: false);
     final pendingCount = pendingEntries.length;
     final pendingPuros = pendingEntries.fold<int>(0, (total, entry) {
-      return total + (int.tryParse(entry.cantidadText.trim()) ?? 0);
+      final quantity = int.tryParse(entry.cantidadText.trim());
+
+      return total + (quantity != null && quantity > 0 ? quantity : 0);
+    });
+    final pendingActivities = pendingEntries.fold<int>(0, (total, entry) {
+      return total +
+          multiScanPendingActivities(
+            quantityText: entry.cantidadText,
+            activity: entry.activity,
+          );
     });
     final timeLabels = _entryTimeLabels();
 
@@ -12596,6 +14362,14 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                     ),
                     Text(
                       '${formatIntegerWithCommas(pendingPuros)} puros pendientes',
+                      style: TextStyle(
+                        color: palette.primary,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Text(
+                      '${formatIntegerWithCommas(pendingActivities)} actividades pendientes',
                       style: TextStyle(
                         color: palette.primary,
                         fontSize: 10.5,
@@ -12916,7 +14690,7 @@ class _MultiVinetaEntryTileState extends State<_MultiVinetaEntryTile> {
                   : widget.onActivitySearch,
               child: InputDecorator(
                 decoration: const InputDecoration(
-                  labelText: 'Actividad',
+                  labelText: 'Actividad de esta viñeta',
                   isDense: true,
                   prefixIcon: Icon(Icons.task_alt_rounded, size: 16),
                   suffixIcon: Icon(Icons.search_rounded, size: 18),
@@ -13401,9 +15175,10 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       return;
     }
 
-    if (activity.processGroup == VinetaProcessGroup.llenado &&
-        !_process.canFill) {
-      _showMessage(_process.fillBlockMessage);
+    final processError = multiScanActivityErrorForProcess(activity, _process);
+
+    if (processError != null) {
+      _showMessage(processError);
       return;
     }
 
@@ -13642,8 +15417,6 @@ class VinetaProcessTimeline extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final steps = process.steps;
-    final blockedFill =
-        selectedGroup == VinetaProcessGroup.llenado && !process.canFill;
 
     if (steps.isEmpty) {
       return const SizedBox.shrink();
@@ -13697,9 +15470,6 @@ class VinetaProcessTimeline extends StatelessWidget {
                         child: VinetaProcessStepView(
                           step: step,
                           selected: step.group == selectedGroup,
-                          blocked:
-                              step.group == VinetaProcessGroup.llenado &&
-                              !process.canFill,
                         ),
                       ),
                   ],
@@ -13708,19 +15478,6 @@ class VinetaProcessTimeline extends StatelessWidget {
             );
           },
         ),
-        if (blockedFill) ...[
-          const SizedBox(height: 4),
-          Text(
-            process.fillBlockMessage,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: palette.errorText,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
       ],
     );
   }
@@ -13730,27 +15487,21 @@ class VinetaProcessStepView extends StatelessWidget {
   const VinetaProcessStepView({
     required this.step,
     required this.selected,
-    required this.blocked,
     super.key,
   });
 
   final VinetaProcessStepInfo step;
   final bool selected;
-  final bool blocked;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
-    final color = blocked
-        ? palette.errorText
-        : step.completed
+    final color = step.completed
         ? const Color(0xFF10B981)
         : selected
         ? palette.accent
         : palette.muted;
-    final bg = blocked
-        ? palette.errorBg.withValues(alpha: palette.isDark ? 0.55 : 1)
-        : step.completed
+    final bg = step.completed
         ? const Color(
             0xFF10B981,
           ).withValues(alpha: palette.isDark ? 0.18 : 0.12)
@@ -13778,9 +15529,7 @@ class VinetaProcessStepView extends StatelessWidget {
                 ),
               ),
               child: Icon(
-                blocked
-                    ? Icons.lock_rounded
-                    : step.completed
+                step.completed
                     ? Icons.check_rounded
                     : step.optional
                     ? Icons.radio_button_unchecked_rounded
@@ -14781,6 +16530,7 @@ class ActivitySearchSheet extends StatefulWidget {
     required this.token,
     required this.initialQuery,
     this.allowedProcessGroup,
+    this.generalCatalog = false,
     this.productName,
     this.capa,
     this.vitola,
@@ -14792,6 +16542,7 @@ class ActivitySearchSheet extends StatefulWidget {
   final String token;
   final String initialQuery;
   final VinetaProcessGroup? allowedProcessGroup;
+  final bool generalCatalog;
   final String? productName;
   final String? capa;
   final String? vitola;
@@ -14846,6 +16597,7 @@ class _ActivitySearchSheetState extends State<ActivitySearchSheet> {
       final activities = await widget.authApi.searchActivities(
         widget.token,
         query: query,
+        generalCatalog: widget.generalCatalog,
         productName: widget.productName,
         capa: useVinetaFilters ? widget.capa : null,
         vitola: useVinetaFilters ? widget.vitola : null,
@@ -14914,7 +16666,9 @@ class _ActivitySearchSheetState extends State<ActivitySearchSheet> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Buscar actividad',
+                      widget.generalCatalog
+                          ? 'Actividades del catalogo'
+                          : 'Buscar actividad',
                       style: TextStyle(
                         color: palette.text,
                         fontSize: 18,
@@ -14936,9 +16690,11 @@ class _ActivitySearchSheetState extends State<ActivitySearchSheet> {
                 textInputAction: TextInputAction.search,
                 onChanged: _queueSearch,
                 onSubmitted: (_) => unawaited(_search()),
-                decoration: const InputDecoration(
-                  labelText: 'Actividad, codigo, producto o empaque',
-                  prefixIcon: Icon(Icons.search_rounded),
+                decoration: InputDecoration(
+                  labelText: widget.generalCatalog
+                      ? 'Actividad o codigo'
+                      : 'Actividad, codigo, producto o empaque',
+                  prefixIcon: const Icon(Icons.search_rounded),
                 ),
               ),
               const SizedBox(height: 10),
@@ -15507,6 +17263,7 @@ class AuthApi {
     required int cantidadPuros,
     required String empleadoCodigo,
     required String modoRegistro,
+    required ActivityInfo activity,
     int? minutosTrabajados,
   }) async {
     final payload = <String, dynamic>{
@@ -15515,7 +17272,21 @@ class AuthApi {
       'cantidad_puros': cantidadPuros,
       'empleado_codigo': empleadoCodigo,
       'modo_registro': modoRegistro,
+      'actividad_id': activity.id,
+      'api_id_actividad': activity.apiIdActividad,
+      'codigo_actividad': activity.codigoActividad,
+      'actividad_nombre': activity.nombre,
     };
+
+    if (activity.tipoEmpaque != null) {
+      payload['actividad_tipo_empaque'] = activity.tipoEmpaque;
+    }
+
+    if (modoRegistro == 'por_hora') {
+      payload['precio_mo'] = 0;
+    } else if (activity.precioMo != null) {
+      payload['precio_mo'] = activity.precioMo;
+    }
 
     if (minutosTrabajados != null) {
       payload['minutos_trabajados'] = minutosTrabajados;
@@ -15588,15 +17359,33 @@ class AuthApi {
     );
   }
 
-  Future<EmployeeHoursDayInfo> employeeHoursDay(
+  Future<EmployeeHoursOverviewResult> employeeHoursOverview(
     String token, {
-    required int employeeId,
     required DateTime date,
   }) async {
     final response = await _client.get(
       apiUri(
-        'empleados/$employeeId/horas-ordinarias',
+        'empleados/horas-ordinarias/resumen',
       ).replace(queryParameters: {'fecha': formatApiDate(date)}),
+      headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return EmployeeHoursOverviewResult.fromJson(body);
+  }
+
+  Future<EmployeeHoursDayInfo> employeeHoursDay(
+    String token, {
+    required int employeeId,
+    required DateTime date,
+    required String group,
+  }) async {
+    final response = await _client.get(
+      apiUri('empleados/$employeeId/horas-ordinarias').replace(
+        queryParameters: {'fecha': formatApiDate(date), 'grupo': group},
+      ),
       headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
     );
 
@@ -15687,6 +17476,7 @@ class AuthApi {
     String token, {
     required int employeeId,
     required DateTime date,
+    required String group,
     required int minutes,
   }) async {
     final response = await _client.post(
@@ -15696,7 +17486,11 @@ class AuthApi {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({'fecha': formatApiDate(date), 'minutos': minutes}),
+      body: jsonEncode({
+        'fecha': formatApiDate(date),
+        'grupo': group,
+        'minutos': minutes,
+      }),
     );
 
     final body = _decodeResponse(response);
@@ -15705,9 +17499,27 @@ class AuthApi {
     return EmployeeWorkdayDistributionInfo.fromJson(body);
   }
 
+  Future<void> deleteEmployeeWorkday(
+    String token, {
+    required int employeeId,
+    required DateTime date,
+    required String group,
+  }) async {
+    final response = await _client.delete(
+      apiUri('empleados/$employeeId/jornada-laboral').replace(
+        queryParameters: {'fecha': formatApiDate(date), 'grupo': group},
+      ),
+      headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+  }
+
   Future<List<ActivityInfo>> searchActivities(
     String token, {
     String? query,
+    bool generalCatalog = false,
     String? productName,
     String? capa,
     String? vitola,
@@ -15726,7 +17538,8 @@ class AuthApi {
         if (trimmedCapa.isNotEmpty) 'capa': trimmedCapa,
         if (trimmedVitola.isNotEmpty) 'vitola': trimmedVitola,
         if (trimmedTipoEmpaque.isNotEmpty) 'tipo_empaque': trimmedTipoEmpaque,
-        'limit': '50',
+        if (generalCatalog) 'scope': 'general',
+        'limit': generalCatalog ? '80' : '50',
       },
     );
 
@@ -16062,33 +17875,38 @@ class ActivityInfo {
   final String? productoNombre;
 
   VinetaProcessGroup? get processGroup {
-    final text = _normalizeForMatch(
+    final name = _normalizeForMatch(nombre ?? '');
+    final fullText = _normalizeForMatch(
       [nombre, tipoEmpaque, codigoActividad].whereType<String>().join(' '),
     );
 
-    if (text.contains('rezag') ||
-        text.contains('rezad') ||
-        text.contains('resag')) {
+    if (_matchesRezagoActivityText(name) || _matchesRezagoActivityText(fullText)) {
       return VinetaProcessGroup.rezago;
     }
 
-    if (text.contains('anill') ||
-        text.contains('anil') ||
-        text.contains('celof') ||
-        text.contains('sello') ||
-        text.contains('sell')) {
+    if (_matchesAnilladoActivityText(name)) {
       return VinetaProcessGroup.anillado;
     }
 
-    if (text.contains('llenad') || text.contains('llenado')) {
+    if (_matchesLlenadoActivityText(name)) {
+      return VinetaProcessGroup.llenado;
+    }
+
+    if (_matchesAnilladoActivityText(fullText)) {
+      return VinetaProcessGroup.anillado;
+    }
+
+    if (_matchesLlenadoActivityText(fullText)) {
       return VinetaProcessGroup.llenado;
     }
 
     return null;
   }
 
+
   String get compactMeta {
     return [
+      codigoActividad,
       tipoEmpaque,
     ].where((value) => value != null && value.isNotEmpty).join(' · ');
   }
@@ -16521,6 +18339,8 @@ class DailyVinetaRegistroInfo {
     required this.totalActividades,
     required this.totalMo,
     required this.estado,
+    this.activityGroup,
+    this.employeeGroup,
     this.vinetaId,
     this.codigoVineta,
     this.vinetaApiId,
@@ -16548,6 +18368,8 @@ class DailyVinetaRegistroInfo {
   final String? ordenDelSistema;
   final DailyVinetaRegistroProductInfo producto;
   final DailyVinetaRegistroActivityInfo actividad;
+  final String? activityGroup;
+  final String? employeeGroup;
   final DailyVinetaRegistroEmployeeInfo empleado;
   final int cantidadPuros;
   final int cantidadCajones;
@@ -16586,6 +18408,8 @@ class DailyVinetaRegistroInfo {
       actividad: actividad is Map<String, dynamic>
           ? DailyVinetaRegistroActivityInfo.fromJson(actividad)
           : DailyVinetaRegistroActivityInfo.empty(),
+      activityGroup: _nullableString(json['grupo_actividad']),
+      employeeGroup: _nullableString(json['grupo_empleado']),
       empleado: empleado is Map<String, dynamic>
           ? DailyVinetaRegistroEmployeeInfo.fromJson(empleado)
           : DailyVinetaRegistroEmployeeInfo.empty(),
@@ -16612,7 +18436,13 @@ class DailyVinetaRegistroInfo {
       horaRegistro,
       cantidadPuros,
       empleado.codigo,
+      actividad.id,
+      actividad.apiIdActividad,
+      actividad.codigoActividad,
+      actividad.nombre,
+      actividad.tipoEmpaque,
       modoRegistro,
+      employeeGroup,
       minutosTrabajados,
       estado,
     ].join('|');
@@ -16808,11 +18638,15 @@ class DailyVinetaRegistroEmployeeInfo {
     this.id,
     this.codigo = '',
     this.nombre = 'Empleado',
+    this.cargo,
+    this.area,
   });
 
   final int? id;
   final String codigo;
   final String nombre;
+  final String? cargo;
+  final String? area;
 
   factory DailyVinetaRegistroEmployeeInfo.empty() {
     return const DailyVinetaRegistroEmployeeInfo();
@@ -16823,6 +18657,8 @@ class DailyVinetaRegistroEmployeeInfo {
       id: _nullableInt(json['id']),
       codigo: _nullableString(json['codigo']) ?? '',
       nombre: _nullableString(json['nombre']) ?? 'Empleado',
+      cargo: _nullableString(json['cargo']),
+      area: _nullableString(json['area']),
     );
   }
 }
@@ -16955,6 +18791,81 @@ class DailyWorkSummaryInfo {
   }
 }
 
+class EmployeeHoursOverviewResult {
+  const EmployeeHoursOverviewResult({
+    required this.date,
+    required this.tableAvailable,
+    required this.groupCounts,
+    required this.employees,
+  });
+
+  final String date;
+  final bool tableAvailable;
+  final Map<String, int> groupCounts;
+  final List<EmployeeHoursOverviewItem> employees;
+
+  factory EmployeeHoursOverviewResult.fromJson(Map<String, dynamic> json) {
+    final groups = json['grupos'];
+    final employees = json['empleados'];
+
+    return EmployeeHoursOverviewResult(
+      date: _nullableString(json['fecha']) ?? '',
+      tableAvailable: json['tabla_disponible'] as bool? ?? false,
+      groupCounts: groups is Map<String, dynamic>
+          ? {
+              'rezago': _nullableInt(groups['rezago']) ?? 0,
+              'anillado': _nullableInt(groups['anillado']) ?? 0,
+              'llenado': _nullableInt(groups['llenado']) ?? 0,
+            }
+          : const {'rezago': 0, 'anillado': 0, 'llenado': 0},
+      employees: employees is List
+          ? employees
+                .whereType<Map<String, dynamic>>()
+                .map(EmployeeHoursOverviewItem.fromJson)
+                .toList(growable: false)
+          : const [],
+    );
+  }
+}
+
+class EmployeeHoursOverviewItem {
+  const EmployeeHoursOverviewItem({
+    required this.group,
+    required this.employee,
+    required this.summary,
+  });
+
+  final String group;
+  final EmployeeInfo employee;
+  final EmployeeHoursSummaryInfo summary;
+
+  String get groupLabel => switch (group) {
+    'anillado' => 'Anillado',
+    'llenado' => 'Llenado',
+    _ => 'Rezago',
+  };
+
+  factory EmployeeHoursOverviewItem.fromJson(Map<String, dynamic> json) {
+    final employee = json['empleado'];
+    final summary = json['resumen'];
+
+    return EmployeeHoursOverviewItem(
+      group: _nullableString(json['grupo']) ?? 'rezago',
+      employee: employee is Map<String, dynamic>
+          ? EmployeeInfo.fromJson(employee)
+          : const EmployeeInfo(
+              id: 0,
+              codigo: '',
+              nombre: 'Empleado',
+              activo: false,
+            ),
+      summary: summary is Map<String, dynamic>
+          ? EmployeeHoursSummaryInfo.fromJson(summary)
+          : EmployeeHoursSummaryInfo.empty(),
+    );
+  }
+}
+
 class EmployeeHoursDayInfo {
   const EmployeeHoursDayInfo({
     required this.tableAvailable,
@@ -16963,6 +18874,7 @@ class EmployeeHoursDayInfo {
     required this.summary,
     required this.cajones,
     required this.horasOrdinarias,
+    this.jornadaLaboral,
   });
 
   final bool tableAvailable;
@@ -16971,12 +18883,14 @@ class EmployeeHoursDayInfo {
   final EmployeeHoursSummaryInfo summary;
   final List<EmployeeHoursCajonInfo> cajones;
   final List<EmployeeOrdinaryHourInfo> horasOrdinarias;
+  final EmployeeWorkdayDistributionInfo? jornadaLaboral;
 
   factory EmployeeHoursDayInfo.fromJson(Map<String, dynamic> json) {
     final employee = json['empleado'];
     final summary = json['resumen'];
     final cajones = json['cajones'];
     final horasOrdinarias = json['horas_ordinarias'];
+    final jornadaLaboral = json['jornada_laboral'];
 
     return EmployeeHoursDayInfo(
       tableAvailable: json['tabla_disponible'] as bool? ?? false,
@@ -17004,6 +18918,9 @@ class EmployeeHoursDayInfo {
                 .map(EmployeeOrdinaryHourInfo.fromJson)
                 .toList(growable: false)
           : const [],
+      jornadaLaboral: jornadaLaboral is Map<String, dynamic>
+          ? EmployeeWorkdayDistributionInfo.fromJson(jornadaLaboral)
+          : null,
     );
   }
 }
@@ -17012,6 +18929,11 @@ class EmployeeHoursSummaryInfo {
   const EmployeeHoursSummaryInfo({
     required this.metaMinutos,
     required this.metaTexto,
+    required this.totalVinetas,
+    required this.totalPuros,
+    required this.totalActividades,
+    required this.minutosVinetas,
+    required this.tiempoVinetasTexto,
     required this.minutosCajones,
     required this.tiempoCajonesTexto,
     required this.minutosOrdinarios,
@@ -17026,6 +18948,11 @@ class EmployeeHoursSummaryInfo {
 
   final int metaMinutos;
   final String metaTexto;
+  final int totalVinetas;
+  final int totalPuros;
+  final int totalActividades;
+  final int minutosVinetas;
+  final String tiempoVinetasTexto;
   final int minutosCajones;
   final String tiempoCajonesTexto;
   final int minutosOrdinarios;
@@ -17041,6 +18968,11 @@ class EmployeeHoursSummaryInfo {
     return const EmployeeHoursSummaryInfo(
       metaMinutos: 570,
       metaTexto: '9 h 30 min',
+      totalVinetas: 0,
+      totalPuros: 0,
+      totalActividades: 0,
+      minutosVinetas: 0,
+      tiempoVinetasTexto: '0 min',
       minutosCajones: 0,
       tiempoCajonesTexto: '0 min',
       minutosOrdinarios: 0,
@@ -17058,6 +18990,17 @@ class EmployeeHoursSummaryInfo {
     return EmployeeHoursSummaryInfo(
       metaMinutos: _nullableInt(json['meta_minutos']) ?? 570,
       metaTexto: _nullableString(json['meta_texto']) ?? '9 h 30 min',
+      totalVinetas: _nullableInt(json['total_vinetas']) ?? 0,
+      totalPuros: _nullableInt(json['total_puros']) ?? 0,
+      totalActividades: _nullableInt(json['total_actividades']) ?? 0,
+      minutosVinetas:
+          _nullableInt(json['minutos_vinetas']) ??
+          _nullableInt(json['minutos_cajones']) ??
+          0,
+      tiempoVinetasTexto:
+          _nullableString(json['tiempo_vinetas_texto']) ??
+          _nullableString(json['tiempo_cajones_texto']) ??
+          '0 min',
       minutosCajones: _nullableInt(json['minutos_cajones']) ?? 0,
       tiempoCajonesTexto:
           _nullableString(json['tiempo_cajones_texto']) ?? '0 min',
@@ -17080,6 +19023,7 @@ class EmployeeHoursCajonInfo {
     required this.minutos,
     required this.tiempoTexto,
     required this.porHora,
+    required this.totalActividades,
     this.vineta,
     this.actividad,
     this.producto,
@@ -17091,6 +19035,7 @@ class EmployeeHoursCajonInfo {
   final int minutos;
   final String tiempoTexto;
   final bool porHora;
+  final int totalActividades;
   final String? vineta;
   final String? actividad;
   final String? producto;
@@ -17104,6 +19049,7 @@ class EmployeeHoursCajonInfo {
       actividad: _nullableString(json['actividad']),
       producto: _nullableString(json['producto']),
       cantidadPuros: _nullableInt(json['cantidad_puros']),
+      totalActividades: _nullableInt(json['total_actividades']) ?? 0,
       minutos: _nullableInt(json['minutos']) ?? 0,
       tiempoTexto: _nullableString(json['tiempo_texto']) ?? '0 min',
       porHora: json['por_hora'] as bool? ?? false,
@@ -17401,6 +19347,38 @@ class VinetaProcessInfo {
   }
 }
 
+class VinetaProcessStepActivityInfo {
+  const VinetaProcessStepActivityInfo({
+    required this.nombre,
+    this.id,
+    this.apiId,
+    this.codigo,
+    this.empleado,
+    this.fecha,
+  });
+
+  final String nombre;
+  final int? id;
+  final int? apiId;
+  final String? codigo;
+  final String? empleado;
+  final String? fecha;
+
+  factory VinetaProcessStepActivityInfo.fromJson(Map<String, dynamic> json) {
+    return VinetaProcessStepActivityInfo(
+      nombre: _nullableString(
+            json['actividad_nombre'] ?? json['actividad'] ?? json['nombre'],
+          ) ??
+          '',
+      id: _nullableInt(json['actividad_id'] ?? json['id']),
+      apiId: _nullableInt(json['actividad_api_id'] ?? json['api_id']),
+      codigo: _nullableString(json['actividad_codigo'] ?? json['codigo']),
+      empleado: _nullableString(json['empleado_nombre'] ?? json['empleado']),
+      fecha: _nullableString(json['fecha']),
+    );
+  }
+}
+
 class VinetaProcessStepInfo {
   const VinetaProcessStepInfo({
     required this.group,
@@ -17410,6 +19388,7 @@ class VinetaProcessStepInfo {
     this.activity,
     this.employee,
     this.date,
+    this.activities = const [],
   });
 
   final VinetaProcessGroup group;
@@ -17419,8 +19398,34 @@ class VinetaProcessStepInfo {
   final String? activity;
   final String? employee;
   final String? date;
+  final List<VinetaProcessStepActivityInfo> activities;
+
+  List<VinetaProcessStepActivityInfo> get allActivities {
+    if (activities.isNotEmpty) {
+      return activities;
+    }
+    final actName = activity?.trim();
+    if (actName != null && actName.isNotEmpty) {
+      return [
+        VinetaProcessStepActivityInfo(
+          nombre: actName,
+          empleado: employee,
+          fecha: date,
+        ),
+      ];
+    }
+    return const [];
+  }
 
   factory VinetaProcessStepInfo.fromJson(Map<String, dynamic> json) {
+    final rawActivities = json['actividades'];
+    final activitiesList = rawActivities is List
+        ? rawActivities
+            .whereType<Map<String, dynamic>>()
+            .map(VinetaProcessStepActivityInfo.fromJson)
+            .toList(growable: false)
+        : const <VinetaProcessStepActivityInfo>[];
+
     return VinetaProcessStepInfo(
       group: _processGroupFromKey(_nullableString(json['key'])),
       label: _nullableString(json['label']) ?? 'Proceso',
@@ -17429,9 +19434,11 @@ class VinetaProcessStepInfo {
       activity: _nullableString(json['actividad']),
       employee: _nullableString(json['empleado']),
       date: _nullableString(json['fecha']),
+      activities: activitiesList,
     );
   }
 }
+
 
 VinetaProcessGroup _processGroupFromKey(String? key) {
   return switch (key) {
