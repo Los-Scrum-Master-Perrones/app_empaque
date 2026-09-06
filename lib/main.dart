@@ -1,20 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '1.0.0';
-const appBuildNumber = 15;
+const appVersionName = '2.0.0';
+const appBuildNumber = 23;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -629,6 +631,13 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     });
   }
 
+  void _handleUserUpdated(UserProfile updatedUser) {
+    if (!mounted) return;
+    setState(() {
+      _user = updatedUser;
+    });
+  }
+
   Future<void> _handleLogout() async {
     final token = _token;
 
@@ -694,6 +703,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
               authApi: _authApi,
               token: token,
               user: user,
+              onUserUpdated: _handleUserUpdated,
               onLogout: _handleLogout,
               isDarkMode: _darkMode,
               onToggleTheme: _toggleTheme,
@@ -1737,7 +1747,8 @@ class AppUpdateInfo {
       }
     });
 
-    final hasUpdate = latestCode > currentVersionCode;
+    final hasUpdate = latestCode > currentVersionCode ||
+        (latestName.isNotEmpty && latestName != currentVersionName);
 
     return AppUpdateInfo(
       latestVersionName: latestName,
@@ -1879,21 +1890,24 @@ class _AppNotificationSheetContentState
       _downloadedFilePath = null;
     });
 
+    http.Client? client;
     try {
       final uri = Uri.parse(url);
-      final client = http.Client();
+      client = http.Client();
       final request = http.Request('GET', uri);
       final response = await client.send(request);
 
-      if (response.statusCode != 200) {
+      if (response.statusCode >= 400) {
         throw Exception(
           'El servidor respondió con código HTTP ${response.statusCode}',
         );
       }
 
       final total = response.contentLength ?? 0;
-      final tempDir = await getTemporaryDirectory();
-      final apkFile = File('${tempDir.path}/app_update_arm64.apk');
+
+      // Usar directorio temporal interno para evitar restricciones de MANAGE_EXTERNAL_STORAGE en Android 11+
+      final targetDir = await getTemporaryDirectory();
+      final apkFile = File('${targetDir.path}/app_update_arm64.apk');
 
       if (await apkFile.exists()) {
         try {
@@ -1918,6 +1932,15 @@ class _AppNotificationSheetContentState
 
       await sink.flush();
       await sink.close();
+      client.close();
+      client = null;
+
+      final fileLength = await apkFile.length();
+      if (fileLength < 1024 * 1024) {
+        throw Exception(
+          'El archivo descargado está incompleto (${(fileLength / 1024).toStringAsFixed(1)} KB).',
+        );
+      }
 
       if (mounted) {
         setState(() {
@@ -1927,8 +1950,9 @@ class _AppNotificationSheetContentState
       }
 
       // Abrir instalador de inmediato
-      await _installApk(apkFile.path);
+      await _installApk(apkFile.path, fallbackUrl: url);
     } catch (e) {
+      client?.close();
       if (mounted) {
         setState(() {
           _downloading = false;
@@ -1938,19 +1962,45 @@ class _AppNotificationSheetContentState
     }
   }
 
-  Future<void> _installApk(String filePath) async {
+  Future<void> _installApk(String filePath, {String? fallbackUrl}) async {
     try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (mounted) {
+          showAppMessage(context, 'El archivo APK descargado no existe.');
+        }
+        return;
+      }
+
       final result = await OpenFilex.open(
         filePath,
         type: 'application/vnd.android.package-archive',
       );
-      if (result.type != ResultType.done && mounted) {
-        showAppMessage(
-          context,
-          'Abre el archivo descargado para instalar: ${result.message}',
-        );
+
+      if (result.type != ResultType.done) {
+        // Si el instalador del sistema no pudo abrirse automáticamente, usar el navegador del teléfono como fallback
+        if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
+          final uri = Uri.tryParse(fallbackUrl);
+          if (uri != null && await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+            return;
+          }
+        }
+        if (mounted) {
+          showAppMessage(
+            context,
+            'No se pudo abrir el instalador: ${result.message}',
+          );
+        }
       }
     } catch (e) {
+      if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
+        final uri = Uri.tryParse(fallbackUrl);
+        if (uri != null && await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      }
       if (mounted) {
         showAppMessage(context, 'No se pudo abrir el instalador: $e');
       }
@@ -2157,6 +2207,17 @@ class _AppNotificationSheetContentState
                         ? null
                         : () => _startInAppUpdate(targetUrl),
                   ),
+                  if (targetUrl.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.open_in_browser_rounded, size: 18),
+                      label: const Text('Descargar desde navegador'),
+                      onPressed: () => launchUrl(
+                        Uri.parse(targetUrl),
+                        mode: LaunchMode.externalApplication,
+                      ),
+                    ),
+                  ],
                 ],
               ] else ...[
                 // Estado al día
@@ -2308,6 +2369,7 @@ class HomePage extends StatelessWidget {
     required this.authApi,
     required this.token,
     required this.user,
+    required this.onUserUpdated,
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
@@ -2319,6 +2381,7 @@ class HomePage extends StatelessWidget {
   final AuthApi authApi;
   final String token;
   final UserProfile user;
+  final ValueChanged<UserProfile> onUserUpdated;
   final VoidCallback onLogout;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
@@ -2332,6 +2395,7 @@ class HomePage extends StatelessWidget {
             authApi: authApi,
             token: token,
             user: user,
+            onUserUpdated: onUserUpdated,
             onLogout: onLogout,
             isDarkMode: isDarkMode,
             onToggleTheme: onToggleTheme,
@@ -2342,6 +2406,7 @@ class HomePage extends StatelessWidget {
             authApi: authApi,
             token: token,
             user: user,
+            onUserUpdated: onUserUpdated,
             onLogout: onLogout,
             isDarkMode: isDarkMode,
             onToggleTheme: onToggleTheme,
@@ -2354,6 +2419,7 @@ class AdminHomePage extends StatefulWidget {
     required this.authApi,
     required this.token,
     required this.user,
+    required this.onUserUpdated,
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
@@ -2365,6 +2431,7 @@ class AdminHomePage extends StatefulWidget {
   final AuthApi authApi;
   final String token;
   final UserProfile user;
+  final ValueChanged<UserProfile> onUserUpdated;
   final VoidCallback onLogout;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
@@ -2382,6 +2449,9 @@ class _AdminHomePageState extends State<AdminHomePage> {
   Widget build(BuildContext context) {
     return AppScaffold(
       user: widget.user,
+      authApi: widget.authApi,
+      token: widget.token,
+      onUserUpdated: widget.onUserUpdated,
       onLogout: widget.onLogout,
       isDarkMode: widget.isDarkMode,
       onToggleTheme: widget.onToggleTheme,
@@ -2433,6 +2503,7 @@ class OperatorHomePage extends StatefulWidget {
     required this.authApi,
     required this.token,
     required this.user,
+    required this.onUserUpdated,
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
@@ -2442,6 +2513,7 @@ class OperatorHomePage extends StatefulWidget {
   final AuthApi authApi;
   final String token;
   final UserProfile user;
+  final ValueChanged<UserProfile> onUserUpdated;
   final VoidCallback onLogout;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
@@ -2457,6 +2529,9 @@ class _OperatorHomePageState extends State<OperatorHomePage> {
   Widget build(BuildContext context) {
     return AppScaffold(
       user: widget.user,
+      authApi: widget.authApi,
+      token: widget.token,
+      onUserUpdated: widget.onUserUpdated,
       onLogout: widget.onLogout,
       isDarkMode: widget.isDarkMode,
       onToggleTheme: widget.onToggleTheme,
@@ -2575,8 +2650,8 @@ class AdminMainHomeSection extends StatelessWidget {
               },
             ),
             AdminAccessItem(
-              icon: Icons.badge_rounded,
-              title: 'Seguimiento de empleado',
+              icon: Icons.emoji_events_rounded,
+              title: 'Ranking de empleados',
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -3479,11 +3554,14 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   }
 
   Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _date.isAfter(maxDate) ? maxDate : _date;
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selected == null || !mounted) {
@@ -3506,6 +3584,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   String get _groupLabel => switch (_groupKey) {
     'anillado' => 'Anillado',
     'llenado' => 'Llenado',
+    'limpieza' => 'Limpieza',
     _ => 'Rezago',
   };
 
@@ -4040,21 +4119,25 @@ class EmployeeHoursAccordionCard extends StatelessWidget {
   }
 }
 
-enum EmployeeSeguimientoScope { global, rezago, anillado, llenado }
+enum EmployeeSeguimientoScope { anillado, rezago, llenado }
 
 extension EmployeeSeguimientoScopeMeta on EmployeeSeguimientoScope {
   String get key => switch (this) {
-    EmployeeSeguimientoScope.global => 'global',
-    EmployeeSeguimientoScope.rezago => 'rezago',
     EmployeeSeguimientoScope.anillado => 'anillado',
+    EmployeeSeguimientoScope.rezago => 'rezago',
     EmployeeSeguimientoScope.llenado => 'llenado',
   };
 
   String get label => switch (this) {
-    EmployeeSeguimientoScope.global => 'Global',
-    EmployeeSeguimientoScope.rezago => 'Rezago',
     EmployeeSeguimientoScope.anillado => 'Anillado',
+    EmployeeSeguimientoScope.rezago => 'Rezago',
     EmployeeSeguimientoScope.llenado => 'Llenado',
+  };
+
+  IconData get icon => switch (this) {
+    EmployeeSeguimientoScope.anillado => Icons.all_inclusive_rounded,
+    EmployeeSeguimientoScope.rezago => Icons.inventory_2_rounded,
+    EmployeeSeguimientoScope.llenado => Icons.archive_rounded,
   };
 }
 
@@ -4093,9 +4176,9 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
   final _codeController = TextEditingController();
   final _scrollController = ScrollController();
   Timer? _employeeSearchDebounce;
-  EmployeeSeguimientoScope _scope = EmployeeSeguimientoScope.global;
-  EmployeeSeguimientoPeriod _period = EmployeeSeguimientoPeriod.day;
-  DateTime _date = DateTime.now();
+  EmployeeSeguimientoScope _scope = EmployeeSeguimientoScope.anillado;
+  static const _period = EmployeeSeguimientoPeriod.month;
+  DateTime _date = DateTime(DateTime.now().year, DateTime.now().month, 1);
   EmployeeInfo? _employee;
   EmployeeSeguimientoResult? _result;
   bool _loading = false;
@@ -4105,7 +4188,6 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
   @override
   void initState() {
     super.initState();
-    _date = _normalizedDate(_date);
     unawaited(_load());
   }
 
@@ -4117,48 +4199,32 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
     super.dispose();
   }
 
-  DateTime _normalizedDate(DateTime date) {
-    return switch (_period) {
-      EmployeeSeguimientoPeriod.day => DateTime(
-        date.year,
-        date.month,
-        date.day,
-      ),
-      EmployeeSeguimientoPeriod.month => DateTime(date.year, date.month),
-      EmployeeSeguimientoPeriod.year => DateTime(date.year),
-    };
+  void _previousMonth() {
+    setState(() {
+      _date = DateTime(_date.year, _date.month - 1, 1);
+    });
+    unawaited(_load());
   }
 
-  Future<void> _selectDate() async {
-    final selected = await showDatePicker(
+  void _nextMonth() {
+    setState(() {
+      _date = DateTime(_date.year, _date.month + 1, 1);
+    });
+    unawaited(_load());
+  }
+
+  Future<void> _selectMonth() async {
+    final selected = await showDialog<DateTime>(
       context: context,
-      initialDate: _date,
-      firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      builder: (context) => _MonthPickerDialog(initialDate: _date),
     );
 
-    if (selected == null || !mounted) {
-      return;
+    if (selected != null && mounted) {
+      setState(() {
+        _date = DateTime(selected.year, selected.month, 1);
+      });
+      unawaited(_load());
     }
-
-    setState(() {
-      _date = _normalizedDate(selected);
-    });
-
-    await _load();
-  }
-
-  Future<void> _changePeriod(EmployeeSeguimientoPeriod period) async {
-    if (_period == period) {
-      return;
-    }
-
-    setState(() {
-      _period = period;
-      _date = _normalizedDate(_date);
-    });
-
-    await _load();
   }
 
   Future<void> _changeScope(EmployeeSeguimientoScope scope) async {
@@ -4232,6 +4298,7 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
 
     unawaited(_load());
   }
+
   Future<void> _load() async {
     final requestId = ++_requestId;
 
@@ -4265,7 +4332,7 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
       if (!mounted || requestId != _requestId) return;
 
       setState(() {
-        _error = 'No se pudo cargar el seguimiento.';
+        _error = 'No se pudo cargar el ranking.';
       });
     } finally {
       if (mounted && requestId == _requestId) {
@@ -4282,7 +4349,7 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
     final result = _result;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Seguimiento de empleado')),
+      appBar: AppBar(title: const Text('Ranking de empleados')),
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _load,
@@ -4293,14 +4360,14 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
             children: [
               EmployeeSeguimientoHeaderCard(
                 date: _date,
-                period: _period,
                 selectedScope: _scope,
                 groupCounts: result?.groupCounts ?? const <String, int>{},
                 searchController: _codeController,
                 employee: _employee,
                 loading: _loading,
-                onSelectDate: _selectDate,
-                onPeriodChanged: (period) => unawaited(_changePeriod(period)),
+                onSelectMonth: _selectMonth,
+                onPreviousMonth: _previousMonth,
+                onNextMonth: _nextMonth,
                 onScopeChanged: (scope) => unawaited(_changeScope(scope)),
                 onSearchChanged: _scheduleEmployeeSearch,
                 onSearchSubmitted: _applyEmployeeSearch,
@@ -4328,15 +4395,17 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
               else ...[
                 EmployeeSeguimientoSummaryCard(result: result),
                 const SizedBox(height: 10),
+                EmployeeSeguimientoEmployeeList(
+                  employees: result.employeeSummaries,
+                  date: _date,
+                  scope: _scope,
+                ),
                 if (result.activitySummaries.isNotEmpty) ...[
+                  const SizedBox(height: 10),
                   EmployeeSeguimientoActivityList(
                     activities: result.activitySummaries,
                   ),
-                  const SizedBox(height: 10),
                 ],
-                EmployeeSeguimientoEmployeeList(
-                  employees: result.employeeSummaries,
-                ),
               ],
             ],
           ),
@@ -4349,14 +4418,14 @@ class _EmployeeSeguimientoPageState extends State<EmployeeSeguimientoPage> {
 class EmployeeSeguimientoHeaderCard extends StatelessWidget {
   const EmployeeSeguimientoHeaderCard({
     required this.date,
-    required this.period,
     required this.selectedScope,
     required this.groupCounts,
     required this.searchController,
     required this.employee,
     required this.loading,
-    required this.onSelectDate,
-    required this.onPeriodChanged,
+    required this.onSelectMonth,
+    required this.onPreviousMonth,
+    required this.onNextMonth,
     required this.onScopeChanged,
     required this.onSearchChanged,
     required this.onSearchSubmitted,
@@ -4366,14 +4435,14 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
   });
 
   final DateTime date;
-  final EmployeeSeguimientoPeriod period;
   final EmployeeSeguimientoScope selectedScope;
   final Map<String, int> groupCounts;
   final TextEditingController searchController;
   final EmployeeInfo? employee;
   final bool loading;
-  final VoidCallback onSelectDate;
-  final ValueChanged<EmployeeSeguimientoPeriod> onPeriodChanged;
+  final VoidCallback onSelectMonth;
+  final VoidCallback onPreviousMonth;
+  final VoidCallback onNextMonth;
   final ValueChanged<EmployeeSeguimientoScope> onScopeChanged;
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onSearchSubmitted;
@@ -4402,43 +4471,103 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: palette.primary.withValues(alpha: 0.12),
+                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(15),
                   ),
-                  child: Icon(Icons.badge_rounded, color: palette.primary),
+                  child: const Icon(
+                    Icons.emoji_events_rounded,
+                    color: Color(0xFFF59E0B),
+                    size: 24,
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    'Ranking de empleados',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.text,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: EmployeeSeguimientoDateButton(
-                      date: date,
-                      period: period,
-                      onTap: onSelectDate,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Ranking de empleados',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.text,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        'Top mensual de producción por área',
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            EmployeeSeguimientoPeriodTabs(
-              selected: period,
-              onChanged: onPeriodChanged,
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              decoration: BoxDecoration(
+                color: palette.surfaceSoft,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: palette.border),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    tooltip: 'Mes anterior',
+                    iconSize: 22,
+                    onPressed: onPreviousMonth,
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: onSelectMonth,
+                      borderRadius: BorderRadius.circular(14),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.calendar_month_rounded,
+                              size: 17,
+                              color: palette.primary,
+                            ),
+                            const SizedBox(width: 7),
+                            Text(
+                              '${_monthName(date.month)} ${date.year}',
+                              style: TextStyle(
+                                color: palette.text,
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.arrow_drop_down_rounded,
+                              size: 20,
+                              color: palette.muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    tooltip: 'Mes siguiente',
+                    iconSize: 22,
+                    onPressed: onNextMonth,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             EmployeeSeguimientoScopeTabs(
               selected: selectedScope,
               groupCounts: groupCounts,
@@ -4461,104 +4590,146 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
   }
 }
 
-class EmployeeSeguimientoDateButton extends StatelessWidget {
-  const EmployeeSeguimientoDateButton({
-    required this.date,
-    required this.period,
-    required this.onTap,
-    super.key,
-  });
+class _MonthPickerDialog extends StatefulWidget {
+  const _MonthPickerDialog({required this.initialDate});
 
-  final DateTime date;
-  final EmployeeSeguimientoPeriod period;
-  final VoidCallback onTap;
+  final DateTime initialDate;
+
+  @override
+  State<_MonthPickerDialog> createState() => _MonthPickerDialogState();
+}
+
+class _MonthPickerDialogState extends State<_MonthPickerDialog> {
+  late int _selectedYear;
+  late int _selectedMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedYear = widget.initialDate.year;
+    _selectedMonth = widget.initialDate.month;
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
+    final monthNames = [
+      'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+      'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+    ];
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: palette.surfaceSoft,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.border),
-        ),
-        child: Row(
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      backgroundColor: palette.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.event_rounded, size: 17, color: palette.primary),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Text(
-                employeeSeguimientoDateLabel(date, period),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.text,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Seleccionar mes',
+                  style: TextStyle(
+                    color: palette.text,
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: palette.surfaceSoft,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: palette.border),
               ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    onPressed: () => setState(() => _selectedYear--),
+                  ),
+                  Text(
+                    '$_selectedYear',
+                    style: TextStyle(
+                      color: palette.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    onPressed: () => setState(() => _selectedYear++),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 2.1,
+              ),
+              itemCount: 12,
+              itemBuilder: (context, index) {
+                final month = index + 1;
+                final isSelected =
+                    month == _selectedMonth && _selectedYear == widget.initialDate.year;
+                final isCurrentCalendar =
+                    month == DateTime.now().month && _selectedYear == DateTime.now().year;
+
+                return InkWell(
+                  onTap: () {
+                    Navigator.of(context).pop(DateTime(_selectedYear, month, 1));
+                  },
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? palette.primary
+                          : (isCurrentCalendar
+                              ? palette.primary.withValues(alpha: 0.12)
+                              : palette.surfaceSoft),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? palette.primary
+                            : (isCurrentCalendar ? palette.primary : palette.border),
+                      ),
+                    ),
+                    child: Text(
+                      monthNames[index],
+                      style: TextStyle(
+                        color: isSelected
+                            ? palette.onPrimary
+                            : (isCurrentCalendar ? palette.primary : palette.text),
+                        fontSize: 13,
+                        fontWeight: isSelected || isCurrentCalendar
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class EmployeeSeguimientoPeriodTabs extends StatelessWidget {
-  const EmployeeSeguimientoPeriodTabs({
-    required this.selected,
-    required this.onChanged,
-    super.key,
-  });
-
-  final EmployeeSeguimientoPeriod selected;
-  final ValueChanged<EmployeeSeguimientoPeriod> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = appPalette(context);
-
-    return Row(
-      children: EmployeeSeguimientoPeriod.values
-          .map((period) {
-            final active = period == selected;
-
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  right: period == EmployeeSeguimientoPeriod.values.last
-                      ? 0
-                      : 6,
-                ),
-                child: ChoiceChip(
-                  selected: active,
-                  onSelected: (_) => onChanged(period),
-                  label: SizedBox(
-                    width: double.infinity,
-                    child: Text(period.label, textAlign: TextAlign.center),
-                  ),
-                  labelStyle: TextStyle(
-                    color: active ? palette.onPrimary : palette.text,
-                    fontWeight: FontWeight.w900,
-                  ),
-                  selectedColor: palette.primary,
-                  backgroundColor: palette.surface,
-                  side: BorderSide(
-                    color: active ? palette.primary : palette.border,
-                  ),
-                  showCheckmark: false,
-                ),
-              ),
-            );
-          })
-          .toList(growable: false),
     );
   }
 }
@@ -4579,49 +4750,85 @@ class EmployeeSeguimientoScopeTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    return Row(
-      children: EmployeeSeguimientoScope.values
-          .map((scope) {
-            final active = scope == selected;
-            final count = groupCounts[scope.key] ?? 0;
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: palette.surfaceSoft,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        children: EmployeeSeguimientoScope.values.map((scope) {
+          final active = scope == selected;
+          final count = groupCounts[scope.key] ?? 0;
 
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  right: scope == EmployeeSeguimientoScope.values.last ? 0 : 6,
+          return Expanded(
+            child: InkWell(
+              onTap: () => onChanged(scope),
+              borderRadius: BorderRadius.circular(14),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                decoration: BoxDecoration(
+                  color: active ? palette.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: active
+                      ? [
+                          BoxShadow(
+                            color: palette.primary.withValues(alpha: 0.25),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
                 ),
-                child: ChoiceChip(
-                  selected: active,
-                  onSelected: (_) => onChanged(scope),
-                  label: SizedBox(
-                    width: double.infinity,
-                    child: Text(
-                      '${scope.label}\n$count',
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          scope.icon,
+                          size: 15,
+                          color: active ? palette.onPrimary : palette.muted,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            scope.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: active ? palette.onPrimary : palette.text,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  labelStyle: TextStyle(
-                    color: active ? palette.onPrimary : palette.text,
-                    fontSize: 11.2,
-                    fontWeight: FontWeight.w900,
-                  ),
-                  selectedColor: palette.primary,
-                  backgroundColor: palette.surface,
-                  side: BorderSide(
-                    color: active ? palette.primary : palette.border,
-                  ),
-                  showCheckmark: false,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 2,
-                    vertical: 7,
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    const SizedBox(height: 2),
+                    Text(
+                      '$count emp.',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: active
+                            ? palette.onPrimary.withValues(alpha: 0.85)
+                            : palette.muted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            );
-          })
-          .toList(growable: false),
+            ),
+          );
+        }).toList(growable: false),
+      ),
     );
   }
 }
@@ -4937,79 +5144,417 @@ class EmployeeSeguimientoActivityTile extends StatelessWidget {
   }
 }
 
+class EmployeeRankingPodium extends StatelessWidget {
+  const EmployeeRankingPodium({
+    required this.topEmployees,
+    super.key,
+  });
+
+  final List<EmployeeSeguimientoEmployeeSummary> topEmployees;
+
+  @override
+  Widget build(BuildContext context) {
+    if (topEmployees.isEmpty) return const SizedBox.shrink();
+
+    final palette = appPalette(context);
+    final count = topEmployees.length;
+
+    final first = topEmployees[0];
+    final second = count > 1 ? topEmployees[1] : null;
+    final third = count > 2 ? topEmployees[2] : null;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: palette.border),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.emoji_events_rounded, color: Color(0xFFF59E0B), size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Top 3 del Mes',
+                style: TextStyle(
+                  color: palette.text,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // 2nd Place (Silver)
+              Expanded(
+                child: second != null
+                    ? _PodiumColumn(
+                        employee: second,
+                        rank: 2,
+                        medalColor: const Color(0xFF94A3B8),
+                        accentColor: const Color(0xFF475569),
+                        trophyEmoji: '🥈',
+                        heightExtra: 20,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+              const SizedBox(width: 8),
+              // 1st Place (Gold)
+              Expanded(
+                child: _PodiumColumn(
+                  employee: first,
+                  rank: 1,
+                  medalColor: const Color(0xFFF59E0B),
+                  accentColor: const Color(0xFFB45309),
+                  trophyEmoji: '🥇',
+                  heightExtra: 48,
+                  isFirst: true,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 3rd Place (Bronze)
+              Expanded(
+                child: third != null
+                    ? _PodiumColumn(
+                        employee: third,
+                        rank: 3,
+                        medalColor: const Color(0xFFD97706),
+                        accentColor: const Color(0xFF78350F),
+                        trophyEmoji: '🥉',
+                        heightExtra: 0,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PodiumColumn extends StatelessWidget {
+  const _PodiumColumn({
+    required this.employee,
+    required this.rank,
+    required this.medalColor,
+    required this.accentColor,
+    required this.trophyEmoji,
+    required this.heightExtra,
+    this.isFirst = false,
+  });
+
+  final EmployeeSeguimientoEmployeeSummary employee;
+  final int rank;
+  final Color medalColor;
+  final Color accentColor;
+  final String trophyEmoji;
+  final double heightExtra;
+  final bool isFirst;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+          decoration: BoxDecoration(
+            color: medalColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: medalColor.withValues(alpha: 0.45)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(trophyEmoji, style: const TextStyle(fontSize: 12)),
+              const SizedBox(width: 2),
+              Text(
+                '#$rank',
+                style: TextStyle(
+                  color: accentColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        CircleAvatar(
+          radius: isFirst ? 24 : 20,
+          backgroundColor: medalColor.withValues(alpha: 0.25),
+          child: CircleAvatar(
+            radius: isFirst ? 21 : 17,
+            backgroundColor: isFirst ? palette.primary : palette.surfaceSoft,
+            foregroundColor: isFirst ? palette.onPrimary : palette.text,
+            child: Text(
+              employee.initial,
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: isFirst ? 14 : 12,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          employee.nombre,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: palette.text,
+            fontSize: isFirst ? 12 : 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        Text(
+          'Cod. ${employee.codigo}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: palette.muted,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          height: 60 + heightExtra,
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                medalColor.withValues(alpha: isFirst ? 0.32 : 0.20),
+                medalColor.withValues(alpha: isFirst ? 0.12 : 0.06),
+              ],
+            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            border: Border.all(color: medalColor.withValues(alpha: 0.4)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                formatIntegerWithCommas(employee.actividades),
+                style: TextStyle(
+                  color: isFirst ? palette.primary : palette.text,
+                  fontSize: isFirst ? 15.5 : 13.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                'actividades',
+                style: TextStyle(
+                  color: palette.muted,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '${formatIntegerWithCommas(employee.puros)} puros',
+                style: TextStyle(
+                  color: palette.muted,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class EmployeeSeguimientoEmployeeList extends StatelessWidget {
-  const EmployeeSeguimientoEmployeeList({required this.employees, super.key});
+  const EmployeeSeguimientoEmployeeList({
+    required this.employees,
+    required this.date,
+    required this.scope,
+    super.key,
+  });
 
   final List<EmployeeSeguimientoEmployeeSummary> employees;
+  final DateTime date;
+  final EmployeeSeguimientoScope scope;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
     if (employees.isEmpty) {
-      return const EmployeeSeguimientoEmptyCard(
-        icon: Icons.badge_outlined,
-        title: 'Sin empleados',
-        message: 'No hay registros para el periodo seleccionado.',
+      return EmployeeSeguimientoEmptyCard(
+        icon: Icons.emoji_events_outlined,
+        title: 'Sin empleados en el ranking',
+        message:
+            'No hay registros de producción para ${scope.label} en ${_monthName(date.month)} ${date.year}.',
       );
     }
 
-    return Card(
-      elevation: 0,
-      color: palette.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Empleados',
-              style: TextStyle(
-                color: palette.text,
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-              ),
+    final topPodium =
+        employees.length >= 2 ? employees.take(3).toList(growable: false) : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (topPodium != null) ...[
+          EmployeeRankingPodium(topEmployees: topPodium),
+          const SizedBox(height: 6),
+        ],
+        Card(
+          elevation: 0,
+          color: palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(color: palette.border),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Clasificación general',
+                      style: TextStyle(
+                        color: palette.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: palette.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${employees.length} empleados',
+                        style: TextStyle(
+                          color: palette.primary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                for (var i = 0; i < employees.length; i++)
+                  EmployeeSeguimientoEmployeeTile(
+                    employee: employees[i],
+                    rank: i + 1,
+                  ),
+              ],
             ),
-            const SizedBox(height: 10),
-            for (final employee in employees)
-              EmployeeSeguimientoEmployeeTile(employee: employee),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
 
 class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
-  const EmployeeSeguimientoEmployeeTile({required this.employee, super.key});
+  const EmployeeSeguimientoEmployeeTile({
+    required this.employee,
+    required this.rank,
+    super.key,
+  });
 
   final EmployeeSeguimientoEmployeeSummary employee;
+  final int rank;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
+    final (rankColor, rankBg, rankBorder, medalEmoji) = switch (rank) {
+      1 => (
+        const Color(0xFFD97706),
+        const Color(0xFFFEF3C7),
+        const Color(0xFFF59E0B),
+        '🥇'
+      ),
+      2 => (
+        const Color(0xFF475569),
+        const Color(0xFFF1F5F9),
+        const Color(0xFF94A3B8),
+        '🥈'
+      ),
+      3 => (
+        const Color(0xFF92400E),
+        const Color(0xFFFFEDD5),
+        const Color(0xFFD97706),
+        '🥉'
+      ),
+      _ => (palette.muted, palette.surfaceSoft, palette.border, ''),
+    };
+
+    final isTop3 = rank <= 3;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: palette.surfaceSoft,
+        color: isTop3 ? rankBg.withValues(alpha: 0.35) : palette.surfaceSoft,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: palette.border),
+        border: Border.all(
+          color: isTop3 ? rankBorder.withValues(alpha: 0.65) : palette.border,
+          width: isTop3 ? 1.4 : 1.0,
+        ),
       ),
       child: Row(
         children: [
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: isTop3 ? rankBg : palette.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: rankBorder.withValues(alpha: 0.5)),
+            ),
+            child: isTop3
+                ? Text(
+                    medalEmoji,
+                    style: const TextStyle(fontSize: 18),
+                  )
+                : Text(
+                    '#$rank',
+                    style: TextStyle(
+                      color: rankColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 10),
           CircleAvatar(
-            radius: 18,
-            backgroundColor: palette.primary,
-            foregroundColor: palette.onPrimary,
+            radius: 17,
+            backgroundColor: isTop3 ? rankBorder : palette.primary,
+            foregroundColor: isTop3 ? Colors.white : palette.onPrimary,
             child: Text(
               employee.initial,
-              style: const TextStyle(fontWeight: FontWeight.w900),
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
             ),
           ),
           const SizedBox(width: 10),
@@ -5028,39 +5573,67 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  'Codigo ${employee.codigo}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.muted,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1.5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: palette.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Cod. ${employee.codigo}',
+                        style: TextStyle(
+                          color: palette.primary,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (employee.cargo != null &&
+                        employee.cargo!.trim().isNotEmpty) ...[
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          employee.cargo!.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${formatIntegerWithCommas(employee.cajones)} cajones · ${formatIntegerWithCommas(employee.puros)} puros',
+                  '${formatIntegerWithCommas(employee.puros)} puros · ${formatIntegerWithCommas(employee.cajones)} caj.',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: palette.muted,
-                    fontSize: 11.5,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
                 formatIntegerWithCommas(employee.actividades),
                 style: TextStyle(
-                  color: palette.primary,
-                  fontSize: 15,
+                  color: isTop3 ? rankBorder : palette.primary,
+                  fontSize: 15.5,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -5068,7 +5641,7 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
                 'actividades',
                 style: TextStyle(
                   color: palette.muted,
-                  fontSize: 10,
+                  fontSize: 9.5,
                   fontWeight: FontWeight.w800,
                 ),
               ),
@@ -5353,11 +5926,14 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
   }
 
   Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _date.isAfter(maxDate) ? maxDate : _date;
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selected == null || !mounted) {
@@ -6696,7 +7272,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
   bool _loading = true;
   String? _error;
   DailyVinetaRecordsResult? _result;
-  Map<String, int> _groupCounts = const <String, int>{};
+  Map<String, int> _mainRoleCounts = const <String, int>{};
+  Map<String, int> _subGroupCounts = const <String, int>{};
   List<DailyRecordsEmployeeSummary> _employeeSummariesForGroup =
       const <DailyRecordsEmployeeSummary>[];
   List<DailyRecordsEmployeeSummary> _visibleEmployeeSummaries =
@@ -6704,7 +7281,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
   int _totalPurosForGroup = 0;
   int _totalActividadesForGroup = 0;
   String _employeeSearch = '';
-  String _activityGroupKey = 'rezago';
+  String _mainRoleKey = 'rezagadoras';
+  String _subGroupKey = 'rezago';
 
   @override
   void initState() {
@@ -6733,7 +7311,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
     final result = _result;
 
     if (result == null) {
-      _groupCounts = const <String, int>{};
+      _mainRoleCounts = const <String, int>{};
+      _subGroupCounts = const <String, int>{};
       _employeeSummariesForGroup = const <DailyRecordsEmployeeSummary>[];
       _visibleEmployeeSummaries = const <DailyRecordsEmployeeSummary>[];
       _totalPurosForGroup = 0;
@@ -6741,13 +7320,32 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       return;
     }
 
-    final groupRecords = dailyRecordsForEmployeeGroup(
+    final currentMainOption = dailyRecordsMainRoleOption(_mainRoleKey);
+    if (!currentMainOption.subOptions.any((s) => s.key == _subGroupKey)) {
+      _subGroupKey = currentMainOption.subOptions.first.key;
+    }
+
+    final groupRecords = dailyRecordsForHierarchy(
       result.records,
-      _activityGroupKey,
+      _mainRoleKey,
+      _subGroupKey,
     );
     final summaries = dailyRecordsEmployeeSummaries(groupRecords);
 
-    _groupCounts = dailyRecordsEmployeeGroupCounts(result.records);
+    _mainRoleCounts = {
+      for (final mainOpt in dailyRecordsMainRoleGroups)
+        mainOpt.key: countRecordsForMainRole(result.records, mainOpt.key),
+    };
+
+    _subGroupCounts = {
+      for (final subOpt in currentMainOption.subOptions)
+        subOpt.key: countRecordsForSubOption(
+          result.records,
+          _mainRoleKey,
+          subOpt.key,
+        ),
+    };
+
     _employeeSummariesForGroup = summaries;
     _visibleEmployeeSummaries = _filteredEmployeeSummaries(summaries);
     _totalPurosForGroup = summaries.fold<int>(
@@ -6759,6 +7357,7 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       (total, summary) => total + summary.totalActividades,
     );
   }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -6799,11 +7398,14 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
   }
 
   Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _date.isAfter(maxDate) ? maxDate : _date;
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selected == null || !mounted) {
@@ -6845,7 +7447,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
           authApi: widget.authApi,
           token: widget.token,
           date: _date,
-          activityGroupKey: _activityGroupKey,
+          activityGroupKey: _subGroupKey,
+          mainRoleKey: _mainRoleKey,
           initialSummary: summary,
         ),
       ),
@@ -6886,11 +7489,10 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
     final result = _result;
     final employeeSummaries = _employeeSummariesForGroup;
     final visibleEmployeeSummaries = _visibleEmployeeSummaries;
-    final groupCounts = _groupCounts;
     final hasEmployeeSearch = _employeeSearch.trim().isNotEmpty;
-    final activityGroupLabel = dailyRecordsActivityGroupOption(
-      _activityGroupKey,
-    ).label;
+    final mainLabel = dailyRecordsMainRoleOption(_mainRoleKey).label;
+    final subLabel = dailyRecordsSubOptionLabel(_mainRoleKey, _subGroupKey);
+    final activityGroupLabel = '$mainLabel · $subLabel';
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -6984,11 +7586,22 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
                 child: DailyRecordsEmployeeListCard(
                   controller: _employeeSearchController,
                   totalEmployees: employeeSummaries.length,
-                  activityGroupKey: _activityGroupKey,
-                  groupCounts: groupCounts,
-                  onActivityGroupChanged: (value) {
+                  mainRoleKey: _mainRoleKey,
+                  subGroupKey: _subGroupKey,
+                  mainRoleCounts: _mainRoleCounts,
+                  subGroupCounts: _subGroupCounts,
+                  onMainRoleChanged: (newMainKey) {
                     setState(() {
-                      _activityGroupKey = value;
+                      _mainRoleKey = newMainKey;
+                      final mainOpt = dailyRecordsMainRoleOption(newMainKey);
+                      _subGroupKey = mainOpt.subOptions.first.key;
+                      _updateRecordsDerivedState();
+                    });
+                    _resetScroll();
+                  },
+                  onSubGroupChanged: (newSubKey) {
+                    setState(() {
+                      _subGroupKey = newSubKey;
                       _updateRecordsDerivedState();
                     });
                     _resetScroll();
@@ -7097,6 +7710,78 @@ List<DailyRecordsEmployeeSummary> dailyRecordsEmployeeSummaries(
   return summaries;
 }
 
+class DailyRecordsSubOption {
+  const DailyRecordsSubOption({
+    required this.key,
+    required this.label,
+  });
+
+  final String key;
+  final String label;
+}
+
+class DailyRecordsMainRoleOption {
+  const DailyRecordsMainRoleOption({
+    required this.key,
+    required this.label,
+    required this.subOptions,
+  });
+
+  final String key;
+  final String label;
+  final List<DailyRecordsSubOption> subOptions;
+}
+
+const dailyRecordsMainRoleGroups = [
+  DailyRecordsMainRoleOption(
+    key: 'rezagadoras',
+    label: 'Rezagadoras',
+    subOptions: [
+      DailyRecordsSubOption(key: 'rezago', label: 'Rezago'),
+      DailyRecordsSubOption(key: 'anillado', label: 'Anillado'),
+      DailyRecordsSubOption(key: 'llenado', label: 'Llenado'),
+    ],
+  ),
+  DailyRecordsMainRoleOption(
+    key: 'anilladoras',
+    label: 'Anilladoras',
+    subOptions: [
+      DailyRecordsSubOption(key: 'anillado', label: 'Anillado'),
+      DailyRecordsSubOption(key: 'rezago', label: 'Rezago'),
+      DailyRecordsSubOption(key: 'llenado', label: 'Llenado'),
+    ],
+  ),
+  DailyRecordsMainRoleOption(
+    key: 'llenadoras',
+    label: 'Llenadoras',
+    subOptions: [
+      DailyRecordsSubOption(key: 'llenado', label: 'Llenado'),
+      DailyRecordsSubOption(key: 'rezago', label: 'Rezago'),
+      DailyRecordsSubOption(key: 'anillado', label: 'Anillado'),
+    ],
+  ),
+  DailyRecordsMainRoleOption(
+    key: 'limpiadoras',
+    label: 'Limpiadoras',
+    subOptions: [
+      DailyRecordsSubOption(key: 'limpieza', label: 'Limpieza'),
+      DailyRecordsSubOption(key: 'rezago', label: 'Rezago'),
+      DailyRecordsSubOption(key: 'anillado', label: 'Anillado'),
+      DailyRecordsSubOption(key: 'llenado', label: 'Llenado'),
+    ],
+  ),
+  DailyRecordsMainRoleOption(
+    key: 'por_hora',
+    label: 'Por hora',
+    subOptions: [
+      DailyRecordsSubOption(key: 'rezagadoras', label: 'Rezagadoras'),
+      DailyRecordsSubOption(key: 'anilladoras', label: 'Anilladoras'),
+      DailyRecordsSubOption(key: 'llenadoras', label: 'Llenadoras'),
+      DailyRecordsSubOption(key: 'limpiadoras', label: 'Limpiadoras'),
+    ],
+  ),
+];
+
 class DailyRecordsActivityGroupOption {
   const DailyRecordsActivityGroupOption({
     required this.key,
@@ -7111,12 +7796,37 @@ const dailyRecordsActivityGroups = [
   DailyRecordsActivityGroupOption(key: 'rezago', label: 'Rezago'),
   DailyRecordsActivityGroupOption(key: 'anillado', label: 'Anillado'),
   DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
+  DailyRecordsActivityGroupOption(key: 'limpieza', label: 'Limpieza'),
 ];
 
 const dailyRecordsEmployeeGroups = [
-  ...dailyRecordsActivityGroups,
+  DailyRecordsActivityGroupOption(key: 'rezagadoras', label: 'Rezagadoras'),
+  DailyRecordsActivityGroupOption(key: 'anilladoras', label: 'Anilladoras'),
+  DailyRecordsActivityGroupOption(key: 'llenadoras', label: 'Llenadoras'),
+  DailyRecordsActivityGroupOption(key: 'limpiadoras', label: 'Limpiadoras'),
   DailyRecordsActivityGroupOption(key: 'por_hora', label: 'Por hora'),
 ];
+
+DailyRecordsMainRoleOption dailyRecordsMainRoleOption(String key) {
+  for (final option in dailyRecordsMainRoleGroups) {
+    if (option.key == key) {
+      return option;
+    }
+  }
+
+  return dailyRecordsMainRoleGroups.first;
+}
+
+String dailyRecordsSubOptionLabel(String mainRoleKey, String subKey) {
+  final mainOption = dailyRecordsMainRoleOption(mainRoleKey);
+  for (final subOption in mainOption.subOptions) {
+    if (subOption.key == subKey) {
+      return subOption.label;
+    }
+  }
+
+  return mainOption.subOptions.first.label;
+}
 
 DailyRecordsActivityGroupOption dailyRecordsActivityGroupOption(String key) {
   for (final option in dailyRecordsEmployeeGroups) {
@@ -7125,7 +7835,95 @@ DailyRecordsActivityGroupOption dailyRecordsActivityGroupOption(String key) {
     }
   }
 
+  for (final option in dailyRecordsActivityGroups) {
+    if (option.key == key) {
+      return option;
+    }
+  }
+
   return dailyRecordsActivityGroups.first;
+}
+
+String resolveRecordEmployeeRole(DailyVinetaRegistroInfo record) {
+  final code = record.empleado.codigo.trim();
+  if (code == '8219' || code == '8217') {
+    return 'rezagadoras';
+  }
+
+  final group = record.employeeGroup?.trim().toLowerCase();
+  if (group == 'rezago' || group == 'rezagadoras') return 'rezagadoras';
+  if (group == 'limpieza' || group == 'limpiadoras') return 'limpiadoras';
+  if (group == 'anillado' || group == 'anilladoras') return 'anilladoras';
+  if (group == 'llenado' || group == 'llenadoras') return 'llenadoras';
+
+  final cargo = _normalizeForMatch(record.empleado.cargo ?? '');
+  if (cargo.contains('rezag') || cargo.contains('resag')) return 'rezagadoras';
+  if (cargo.contains('limpia') || cargo.contains('limpi')) return 'limpiadoras';
+  if (cargo.contains('anill') ||
+      cargo.contains('celofan') ||
+      cargo.contains('etiquet') ||
+      cargo.contains('pega')) {
+    return 'anilladoras';
+  }
+  if (cargo.contains('llenad') ||
+      cargo.contains('embasad') ||
+      cargo.contains('paquet') ||
+      cargo.contains('sellado')) {
+    return 'llenadoras';
+  }
+
+  return 'anilladoras';
+}
+
+bool dailyRecordMatchesHierarchy(
+  DailyVinetaRegistroInfo record,
+  String mainRoleKey,
+  String subKey,
+) {
+  if (mainRoleKey == 'por_hora') {
+    if (!record.porHora) return false;
+    final empRole = resolveRecordEmployeeRole(record);
+    return empRole == subKey;
+  }
+
+  if (record.porHora) return false;
+  final empRole = resolveRecordEmployeeRole(record);
+  if (empRole != mainRoleKey) return false;
+
+  return dailyRecordMatchesActivityGroup(record, subKey);
+}
+
+int countRecordsForMainRole(
+  List<DailyVinetaRegistroInfo> records,
+  String mainRoleKey,
+) {
+  if (mainRoleKey == 'por_hora') {
+    return records.where((r) => r.porHora).length;
+  }
+
+  return records
+      .where((r) => !r.porHora && resolveRecordEmployeeRole(r) == mainRoleKey)
+      .length;
+}
+
+int countRecordsForSubOption(
+  List<DailyVinetaRegistroInfo> records,
+  String mainRoleKey,
+  String subKey,
+) {
+  return records
+      .where((r) => dailyRecordMatchesHierarchy(r, mainRoleKey, subKey))
+      .length;
+}
+
+List<DailyVinetaRegistroInfo> dailyRecordsForHierarchy(
+  List<DailyVinetaRegistroInfo> records,
+  String mainRoleKey,
+  String subKey,
+) {
+  return records
+      .where((r) => dailyRecordMatchesHierarchy(r, mainRoleKey, subKey))
+      .toList(growable: false);
 }
 
 List<DailyVinetaRegistroInfo> dailyRecordsForEmployeeGroup(
@@ -7142,7 +7940,7 @@ Map<String, int> dailyRecordsEmployeeGroupCounts(
 ) {
   return {
     for (final option in dailyRecordsEmployeeGroups)
-      option.key: dailyRecordsForEmployeeGroup(records, option.key).length,
+      option.key: countRecordsForMainRole(records, option.key),
   };
 }
 
@@ -7158,12 +7956,13 @@ bool dailyRecordMatchesEmployeeGroup(
     return false;
   }
 
-  final employeeGroup = record.employeeGroup?.trim().toLowerCase();
-
-  if (employeeGroup == 'rezago' ||
-      employeeGroup == 'anillado' ||
-      employeeGroup == 'llenado') {
-    return employeeGroup == groupKey;
+  final role = resolveRecordEmployeeRole(record);
+  if (role == groupKey ||
+      (role == 'rezagadoras' && groupKey == 'rezago') ||
+      (role == 'anilladoras' && groupKey == 'anillado') ||
+      (role == 'llenadoras' && groupKey == 'llenado') ||
+      (role == 'limpiadoras' && groupKey == 'limpieza')) {
+    return true;
   }
 
   return dailyRecordMatchesActivityGroup(record, groupKey);
@@ -7191,18 +7990,6 @@ bool dailyRecordMatchesActivityGroup(
   DailyVinetaRegistroInfo record,
   String groupKey,
 ) {
-  final serverGroup = record.activityGroup?.trim().toLowerCase();
-
-  if (serverGroup == groupKey) {
-    return true;
-  }
-
-  if (serverGroup == 'rezago' ||
-      serverGroup == 'anillado' ||
-      serverGroup == 'llenado') {
-    return false;
-  }
-
   final text = _normalizeForMatch(
     [
       record.actividad.nombre,
@@ -7212,9 +7999,10 @@ bool dailyRecordMatchesActivityGroup(
   );
 
   return switch (groupKey) {
+    'rezago' => _matchesRezagoActivityText(text),
     'anillado' => _matchesAnilladoActivityText(text),
     'llenado' => _matchesLlenadoActivityText(text),
-    'rezago' => _matchesRezagoActivityText(text),
+    'limpieza' => _matchesLimpiezaActivityText(text),
     _ => false,
   };
 }
@@ -7222,39 +8010,56 @@ bool dailyRecordMatchesActivityGroup(
 bool _matchesRezagoActivityText(String text) {
   return text.contains('rezag') ||
       text.contains('rezad') ||
-      text.contains('resag');
+      text.contains('resag') ||
+      text.contains('rezurado') ||
+      text.contains('rasurado');
 }
 
 bool _matchesAnilladoActivityText(String text) {
-  final hasAnilladoKey = text.contains('anill') ||
+  return text.contains('anill') ||
       text.contains('anil') ||
       text.contains('celof') ||
+      text.contains('cello') ||
       text.contains('sello') ||
       text.contains('esponj') ||
       text.contains('lamina') ||
-      text.contains('l mina');
-
-  if (hasAnilladoKey) {
-    return true;
-  }
-
-  return text.contains('sell') && !_matchesLlenadoActivityText(text);
+      text.contains('l mina') ||
+      text.contains('tapon') ||
+      text.contains('banda') ||
+      text.contains('cinta') ||
+      text.contains('rolado');
 }
 
 bool _matchesLlenadoActivityText(String text) {
-  if (text.contains('anill') || text.contains('anil') || text.contains('celof')) {
+  if (_matchesRezagoActivityText(text) || _matchesAnilladoActivityText(text)) {
     return false;
   }
 
   return text.contains('llenad') ||
-      text.contains('kretek') ||
       text.contains('petaca') ||
       text.contains('sampler') ||
       text.contains('display') ||
       text.contains('bolsa') ||
+      text.contains('caja') ||
+      text.contains('paquet') ||
+      text.contains('tubo') ||
+      text.contains('costura') ||
       text.contains('sellado') ||
-      text.contains('sell') ||
-      (text.contains('paquete') && text.contains('tubo'));
+      text.contains('jarra') ||
+      text.contains('kretek') ||
+      text.contains('swisher');
+}
+
+bool _matchesLimpiezaActivityText(String text) {
+  if (_matchesRezagoActivityText(text) ||
+      _matchesAnilladoActivityText(text) ||
+      _matchesLlenadoActivityText(text)) {
+    return false;
+  }
+
+  return text.contains('limpieza') ||
+      text.contains('limpiad') ||
+      text.contains('limpia');
 }
 
 
@@ -7358,11 +8163,14 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
   }
 
   Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _date.isAfter(maxDate) ? maxDate : _date;
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selected == null || !mounted) {
@@ -7470,9 +8278,10 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
           Positioned(
             right: 20,
             bottom: MediaQuery.of(context).padding.bottom + 84,
-            child: FloatingActionButton.extended(
+            child: FloatingActionButton(
               onPressed: _sharing ? null : _shareReportImage,
               elevation: 4,
+              tooltip: 'Compartir estadístico',
               backgroundColor: palette.isDark
                   ? const Color(0xFF38BDF8)
                   : palette.primary,
@@ -7482,25 +8291,18 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
-              icon: _sharing
+              child: _sharing
                   ? SizedBox(
-                      width: 18,
-                      height: 18,
+                      width: 20,
+                      height: 20,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
+                        strokeWidth: 2.2,
                         color: palette.isDark
                             ? const Color(0xFF0F172A)
                             : Colors.white,
                       ),
                     )
-                  : const Icon(Icons.share_rounded, size: 20),
-              label: Text(
-                _sharing ? 'Preparando...' : 'Compartir',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13.5,
-                ),
-              ),
+                  : const Icon(Icons.send_rounded, size: 22),
             ),
           ),
       ],
@@ -7770,7 +8572,9 @@ class DailyRecordsStatisticsReport extends StatelessWidget {
                       child: StatisticSummaryTile(
                         icon: Icons.trending_up_rounded,
                         label: 'Prom. act',
-                        value: formatDecimalWithCommas(averageActividades),
+                        value: formatIntegerWithCommas(
+                          averageActividades.round(),
+                        ),
                         tone: palette.primary,
                       ),
                     ),
@@ -7779,7 +8583,7 @@ class DailyRecordsStatisticsReport extends StatelessWidget {
                       child: StatisticSummaryTile(
                         icon: Icons.trending_up_rounded,
                         label: 'Prom. puros',
-                        value: formatDecimalWithCommas(averagePuros),
+                        value: formatIntegerWithCommas(averagePuros.round()),
                         tone: palette.primary,
                       ),
                     ),
@@ -8089,6 +8893,7 @@ class DailyRecordsEmployeeRecordsPage extends StatefulWidget {
     required this.date,
     required this.activityGroupKey,
     required this.initialSummary,
+    this.mainRoleKey = 'rezagadoras',
     super.key,
   });
 
@@ -8096,6 +8901,7 @@ class DailyRecordsEmployeeRecordsPage extends StatefulWidget {
   final String token;
   final DateTime date;
   final String activityGroupKey;
+  final String mainRoleKey;
   final DailyRecordsEmployeeSummary initialSummary;
 
   @override
@@ -8118,6 +8924,7 @@ class _DailyRecordsEmployeeRecordsPageState
     _summary = widget.initialSummary;
     _records = List<DailyVinetaRegistroInfo>.of(widget.initialSummary.records);
   }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -8131,7 +8938,11 @@ class _DailyRecordsEmployeeRecordsPageState
       );
       final updatedSummary = findDailyRecordsEmployeeSummary(
         dailyRecordsEmployeeSummaries(
-          dailyRecordsForEmployeeGroup(result.records, widget.activityGroupKey),
+          dailyRecordsForHierarchy(
+            result.records,
+            widget.mainRoleKey,
+            widget.activityGroupKey,
+          ),
         ),
         widget.initialSummary.key,
       );
@@ -8594,9 +9405,12 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
   const DailyRecordsEmployeeListCard({
     required this.controller,
     required this.totalEmployees,
-    required this.activityGroupKey,
-    required this.groupCounts,
-    required this.onActivityGroupChanged,
+    required this.mainRoleKey,
+    required this.subGroupKey,
+    required this.mainRoleCounts,
+    required this.subGroupCounts,
+    required this.onMainRoleChanged,
+    required this.onSubGroupChanged,
     required this.onScanEmployee,
     required this.onSearchChanged,
     super.key,
@@ -8604,9 +9418,12 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
 
   final TextEditingController controller;
   final int totalEmployees;
-  final String activityGroupKey;
-  final Map<String, int> groupCounts;
-  final ValueChanged<String> onActivityGroupChanged;
+  final String mainRoleKey;
+  final String subGroupKey;
+  final Map<String, int> mainRoleCounts;
+  final Map<String, int> subGroupCounts;
+  final ValueChanged<String> onMainRoleChanged;
+  final ValueChanged<String> onSubGroupChanged;
   final VoidCallback onScanEmployee;
   final ValueChanged<String> onSearchChanged;
 
@@ -8614,6 +9431,7 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final hasSearch = controller.text.trim().isNotEmpty;
+    final currentMainOption = dailyRecordsMainRoleOption(mainRoleKey);
 
     return Card(
       elevation: 0,
@@ -8649,12 +9467,19 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            DailyRecordsActivityGroupTabs(
-              selectedKey: activityGroupKey,
-              groupCounts: groupCounts,
-              options: dailyRecordsEmployeeGroups,
-              onChanged: onActivityGroupChanged,
+            const SizedBox(height: 10),
+            DailyRecordsMainRoleTabs(
+              selectedKey: mainRoleKey,
+              groupCounts: mainRoleCounts,
+              options: dailyRecordsMainRoleGroups,
+              onChanged: onMainRoleChanged,
+            ),
+            const SizedBox(height: 8),
+            DailyRecordsSubGroupTabs(
+              selectedKey: subGroupKey,
+              groupCounts: subGroupCounts,
+              options: currentMainOption.subOptions,
+              onChanged: onSubGroupChanged,
             ),
             const SizedBox(height: 12),
             TextField(
@@ -8718,9 +9543,9 @@ class DailyRecordsTotalPurosCard extends StatelessWidget {
     final averageActividades = employeeCount == 0
         ? 0.0
         : totalActividades / employeeCount;
-    final formattedAveragePuros = formatDecimalWithCommas(averagePuros);
-    final formattedAverageActividades = formatDecimalWithCommas(
-      averageActividades,
+    final formattedAveragePuros = formatIntegerWithCommas(averagePuros.round());
+    final formattedAverageActividades = formatIntegerWithCommas(
+      averageActividades.round(),
     );
     final employeeLabel = employeeCount == 1 ? 'empleado' : 'empleados';
 
@@ -8910,6 +9735,124 @@ class DailyRecordsTotalPurosCard extends StatelessWidget {
   }
 }
 
+class DailyRecordsMainRoleTabs extends StatelessWidget {
+  const DailyRecordsMainRoleTabs({
+    required this.selectedKey,
+    required this.groupCounts,
+    required this.options,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String selectedKey;
+  final Map<String, int> groupCounts;
+  final List<DailyRecordsMainRoleOption> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: options.map((option) {
+          final selected = option.key == selectedKey;
+          final count = groupCounts[option.key] ?? 0;
+          final isLast = option == options.last;
+
+          return Padding(
+            padding: EdgeInsets.only(right: isLast ? 0 : 6),
+            child: ChoiceChip(
+              selected: selected,
+              onSelected: (_) => onChanged(option.key),
+              label: Text(
+                '${option.label} ($count)',
+                style: TextStyle(
+                  color: selected ? palette.onPrimary : palette.text,
+                  fontSize: 11.5,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                ),
+              ),
+              selectedColor: palette.primary,
+              backgroundColor: palette.surfaceSoft,
+              side: BorderSide(
+                color: selected ? palette.primary : palette.border,
+              ),
+              showCheckmark: false,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          );
+        }).toList(growable: false),
+      ),
+    );
+  }
+}
+
+class DailyRecordsSubGroupTabs extends StatelessWidget {
+  const DailyRecordsSubGroupTabs({
+    required this.selectedKey,
+    required this.groupCounts,
+    required this.options,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String selectedKey;
+  final Map<String, int> groupCounts;
+  final List<DailyRecordsSubOption> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: options.map((option) {
+          final selected = option.key == selectedKey;
+          final count = groupCounts[option.key] ?? 0;
+          final isLast = option == options.last;
+
+          return Padding(
+            padding: EdgeInsets.only(right: isLast ? 0 : 6),
+            child: ChoiceChip(
+              selected: selected,
+              onSelected: (_) => onChanged(option.key),
+              label: Text(
+                '${option.label} · $count',
+                style: TextStyle(
+                  color: selected
+                      ? (palette.isDark ? const Color(0xFF38BDF8) : palette.primary)
+                      : palette.muted,
+                  fontSize: 11.0,
+                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                ),
+              ),
+              selectedColor: palette.isDark
+                  ? const Color(0xFF38BDF8).withValues(alpha: 0.16)
+                  : palette.primary.withValues(alpha: 0.10),
+              backgroundColor: palette.surfaceSoft.withValues(alpha: 0.6),
+              side: BorderSide(
+                color: selected
+                    ? (palette.isDark ? const Color(0xFF38BDF8) : palette.primary)
+                    : palette.border.withValues(alpha: 0.6),
+              ),
+              showCheckmark: false,
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          );
+        }).toList(growable: false),
+      ),
+    );
+  }
+}
+
 class DailyRecordsActivityGroupTabs extends StatelessWidget {
   const DailyRecordsActivityGroupTabs({
     required this.selectedKey,
@@ -8928,47 +9871,40 @@ class DailyRecordsActivityGroupTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    return Row(
-      children: options
-          .map((option) {
-            final selected = option.key == selectedKey;
-            final count = groupCounts[option.key] ?? 0;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        children: options.map((option) {
+          final selected = option.key == selectedKey;
+          final count = groupCounts[option.key] ?? 0;
+          final isLast = option == options.last;
 
-            return Expanded(
-              child: Padding(
-                padding: EdgeInsets.only(right: option == options.last ? 0 : 6),
-                child: ChoiceChip(
-                  selected: selected,
-                  onSelected: (_) => onChanged(option.key),
-                  label: SizedBox(
-                    width: double.infinity,
-                    child: Text(
-                      '${option.label}\n$count',
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  labelStyle: TextStyle(
-                    color: selected ? palette.onPrimary : palette.text,
-                    fontSize: 11.2,
-                    fontWeight: FontWeight.w900,
-                  ),
-                  selectedColor: palette.primary,
-                  backgroundColor: palette.surfaceSoft,
-                  side: BorderSide(
-                    color: selected ? palette.primary : palette.border,
-                  ),
-                  showCheckmark: false,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 2,
-                    vertical: 7,
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          return Padding(
+            padding: EdgeInsets.only(right: isLast ? 0 : 6),
+            child: ChoiceChip(
+              selected: selected,
+              onSelected: (_) => onChanged(option.key),
+              label: Text(
+                '${option.label} ($count)',
+                style: TextStyle(
+                  color: selected ? palette.onPrimary : palette.text,
+                  fontSize: 11.2,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-            );
-          })
-          .toList(growable: false),
+              selectedColor: palette.primary,
+              backgroundColor: palette.surfaceSoft,
+              side: BorderSide(
+                color: selected ? palette.primary : palette.border,
+              ),
+              showCheckmark: false,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          );
+        }).toList(growable: false),
+      ),
     );
   }
 }
@@ -10157,11 +11093,14 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
   }
 
   Future<void> _selectDate() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _date.isAfter(maxDate) ? maxDate : _date;
     final selected = await showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selected == null || !mounted) {
@@ -10968,6 +11907,9 @@ class AppScaffold extends StatelessWidget {
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
+    this.authApi,
+    this.token,
+    this.onUserUpdated,
     this.bottomNavigationBar,
     super.key,
   });
@@ -10977,6 +11919,9 @@ class AppScaffold extends StatelessWidget {
   final VoidCallback onLogout;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
+  final AuthApi? authApi;
+  final String? token;
+  final ValueChanged<UserProfile>? onUserUpdated;
   final Widget? bottomNavigationBar;
 
   @override
@@ -10994,42 +11939,82 @@ class AppScaffold extends StatelessWidget {
         foregroundColor: palette.isDark ? Colors.white : palette.text,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
-        title: Row(
-          children: [
-            AppUserAvatar(user: user),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    user.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.isDark ? Colors.white : palette.text,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
+        title: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: authApi != null && token != null && onUserUpdated != null
+              ? () => showProfilePhotoSheet(
+                    context: context,
+                    user: user,
+                    authApi: authApi!,
+                    token: token!,
+                    onUserUpdated: onUserUpdated!,
+                  )
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+            child: Row(
+              children: [
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    AppUserAvatar(user: user),
+                    Positioned(
+                      right: -2,
+                      bottom: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(2.5),
+                        decoration: BoxDecoration(
+                          color: palette.primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: palette.isDark ? appDarkPanel : Colors.white,
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.camera_alt_rounded,
+                          size: 9,
+                          color: palette.onPrimary,
+                        ),
+                      ),
                     ),
+                  ],
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.isDark ? Colors.white : palette.text,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        rolesLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.isDark
+                              ? Colors.white.withValues(alpha: 0.78)
+                              : palette.muted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    rolesLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.isDark
-                          ? Colors.white.withValues(alpha: 0.78)
-                          : palette.muted,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
         actions: [
           const AppNotificationButton(
@@ -11064,19 +12049,23 @@ class AppScaffold extends StatelessWidget {
 }
 
 class AppUserAvatar extends StatelessWidget {
-  const AppUserAvatar({required this.user, super.key});
+  const AppUserAvatar({
+    required this.user,
+    this.size = 36.0,
+    super.key,
+  });
 
   final UserProfile user;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
-    const size = 36.0;
     final palette = appPalette(context);
     final initials = Text(
       user.initials,
       style: TextStyle(
         color: palette.isDark ? Colors.white : palette.primary,
-        fontSize: 13,
+        fontSize: size * 0.36,
         fontWeight: FontWeight.w900,
       ),
     );
@@ -11094,6 +12083,7 @@ class AppUserAvatar extends StatelessWidget {
           color: palette.isDark
               ? Colors.white.withValues(alpha: 0.24)
               : palette.primary.withValues(alpha: 0.28),
+          width: size > 50 ? 2.5 : 1.0,
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -11101,6 +12091,7 @@ class AppUserAvatar extends StatelessWidget {
           ? Center(child: initials)
           : Image.network(
               photoUrl,
+              key: ValueKey(photoUrl),
               fit: BoxFit.cover,
               loadingBuilder: (context, child, progress) {
                 if (progress == null) {
@@ -11114,15 +12105,411 @@ class AppUserAvatar extends StatelessWidget {
                 child: Center(
                   child: Text(
                     user.initials,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 13,
+                      fontSize: size * 0.36,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
               ),
             ),
+    );
+  }
+}
+
+Future<void> showProfilePhotoSheet({
+  required BuildContext context,
+  required UserProfile user,
+  required AuthApi authApi,
+  required String token,
+  required ValueChanged<UserProfile> onUserUpdated,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (sheetContext) => _ProfilePhotoSheet(
+      user: user,
+      authApi: authApi,
+      token: token,
+      onUserUpdated: onUserUpdated,
+    ),
+  );
+}
+
+class _ProfilePhotoSheet extends StatefulWidget {
+  const _ProfilePhotoSheet({
+    required this.user,
+    required this.authApi,
+    required this.token,
+    required this.onUserUpdated,
+  });
+
+  final UserProfile user;
+  final AuthApi authApi;
+  final String token;
+  final ValueChanged<UserProfile> onUserUpdated;
+
+  @override
+  State<_ProfilePhotoSheet> createState() => _ProfilePhotoSheetState();
+}
+
+class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
+  final ImagePicker _picker = ImagePicker();
+  bool _uploading = false;
+  String? _errorMessage;
+
+  Future<void> _pickAndUpload(ImageSource source) async {
+    setState(() {
+      _errorMessage = null;
+    });
+
+    try {
+      final pickedFile = await _picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 85,
+      );
+
+      if (pickedFile == null || !mounted) {
+        return;
+      }
+
+      setState(() {
+        _uploading = true;
+      });
+
+      final bytes = await pickedFile.readAsBytes();
+      final updatedUser = await widget.authApi.uploadProfilePhoto(
+        widget.token,
+        bytes,
+        pickedFile.name.isNotEmpty ? pickedFile.name : 'profile_photo.jpg',
+      );
+
+      if (!mounted) return;
+
+      widget.onUserUpdated(updatedUser);
+      Navigator.of(context).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Foto de perfil actualizada correctamente',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF059669),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _uploading = false;
+        _errorMessage = error is ApiException ? error.message : 'No se pudo subir la foto: $error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final rolesLabel = widget.user.roles.isEmpty
+        ? 'Sin rol'
+        : widget.user.roles.join(', ');
+
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        border: Border.all(color: palette.border),
+      ),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 14,
+        bottom: MediaQuery.of(context).padding.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Container(
+            width: 40,
+            height: 4.5,
+            decoration: BoxDecoration(
+              color: palette.muted.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          const SizedBox(height: 18),
+
+          // Header Title
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Foto de Perfil',
+                style: TextStyle(
+                  color: palette.text,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              IconButton(
+                onPressed: _uploading ? null : () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded, size: 20),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Big Avatar with Glow & Badges
+          Center(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        palette.primary,
+                        palette.primary.withValues(alpha: 0.4),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: AppUserAvatar(
+                    user: widget.user,
+                    size: 88,
+                  ),
+                ),
+                if (_uploading)
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black.withValues(alpha: 0.55),
+                    ),
+                    child: const Center(
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // User name & Role
+          Text(
+            widget.user.name,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.text,
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            widget.user.email,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: palette.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: palette.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              rolesLabel,
+              style: TextStyle(
+                color: palette.primary,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, color: Colors.red, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 20),
+
+          // Actions
+          if (_uploading) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation<Color>(palette.primary),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Subiendo y sincronizando foto...',
+                    style: TextStyle(
+                      color: palette.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            _PhotoActionTile(
+              icon: Icons.camera_alt_rounded,
+              title: 'Tomar fotografía',
+              subtitle: 'Abrir la cámara del dispositivo',
+              tone: palette.primary,
+              onTap: () => _pickAndUpload(ImageSource.camera),
+            ),
+            const SizedBox(height: 10),
+            _PhotoActionTile(
+              icon: Icons.photo_library_rounded,
+              title: 'Seleccionar de la galería',
+              subtitle: 'Elegir una foto guardada en tu teléfono',
+              tone: const Color(0xFF0284C7),
+              onTap: () => _pickAndUpload(ImageSource.gallery),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PhotoActionTile extends StatelessWidget {
+  const _PhotoActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.tone,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color tone;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        decoration: BoxDecoration(
+          color: palette.surfaceSoft,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: palette.border),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: tone.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: tone, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: palette.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: palette.muted,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: palette.muted.withValues(alpha: 0.5),
+              size: 20,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -13680,11 +15067,14 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   }
 
   Future<void> _selectScanDateTime() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _scanDateTime.isAfter(maxDate) ? maxDate : _scanDateTime;
     final selectedDate = await showDatePicker(
       context: context,
-      initialDate: _scanDateTime,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selectedDate == null || !mounted) {
@@ -15853,11 +17243,14 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
   }
 
   Future<void> _selectScanDateTime() async {
+    final now = DateTime.now();
+    final maxDate = now.add(const Duration(days: 14));
+    final initial = _scanDateTime.isAfter(maxDate) ? maxDate : _scanDateTime;
     final selectedDate = await showDatePicker(
       context: context,
-      initialDate: _scanDateTime,
+      initialDate: initial,
       firstDate: DateTime(2024),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
+      lastDate: maxDate,
     );
 
     if (selectedDate == null || !mounted) {
@@ -17680,6 +19073,33 @@ class AuthApi {
     return UserProfile.fromJson(body['user'] as Map<String, dynamic>);
   }
 
+  Future<UserProfile> uploadProfilePhoto(
+    String token,
+    Uint8List imageBytes,
+    String fileName,
+  ) async {
+    final uri = apiUri('user/photo');
+    final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll({
+      'Accept': 'application/json',
+      'Authorization': 'Bearer $token',
+    });
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'photo',
+        imageBytes,
+        filename: fileName,
+      ),
+    );
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return UserProfile.fromJson(body['user'] as Map<String, dynamic>);
+  }
+
   Future<VinetaInfo> scanVineta(
     String token,
     String qr, {
@@ -18771,6 +20191,8 @@ class EmployeeSeguimientoEmployeeSummary {
   const EmployeeSeguimientoEmployeeSummary({
     required this.codigo,
     required this.nombre,
+    this.cargo,
+    this.area,
     required this.registros,
     required this.puros,
     required this.cajones,
@@ -18782,6 +20204,8 @@ class EmployeeSeguimientoEmployeeSummary {
 
   final String codigo;
   final String nombre;
+  final String? cargo;
+  final String? area;
   final int registros;
   final int puros;
   final int cajones;
@@ -18799,6 +20223,8 @@ class EmployeeSeguimientoEmployeeSummary {
     return EmployeeSeguimientoEmployeeSummary(
       codigo: _nullableString(json['codigo']) ?? 'N/A',
       nombre: _nullableString(json['nombre']) ?? 'Empleado',
+      cargo: _nullableString(json['cargo']),
+      area: _nullableString(json['area']),
       registros: _nullableInt(json['registros']) ?? 0,
       puros: _nullableInt(json['puros']) ?? 0,
       cajones: _nullableInt(json['cajones']) ?? 0,
@@ -19423,8 +20849,9 @@ class EmployeeHoursOverviewResult {
               'rezago': _nullableInt(groups['rezago']) ?? 0,
               'anillado': _nullableInt(groups['anillado']) ?? 0,
               'llenado': _nullableInt(groups['llenado']) ?? 0,
+              'limpieza': _nullableInt(groups['limpieza']) ?? 0,
             }
-          : const {'rezago': 0, 'anillado': 0, 'llenado': 0},
+          : const {'rezago': 0, 'anillado': 0, 'llenado': 0, 'limpieza': 0},
       employees: employees is List
           ? employees
                 .whereType<Map<String, dynamic>>()
@@ -19449,6 +20876,7 @@ class EmployeeHoursOverviewItem {
   String get groupLabel => switch (group) {
     'anillado' => 'Anillado',
     'llenado' => 'Llenado',
+    'limpieza' => 'Limpieza',
     _ => 'Rezago',
   };
 
