@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -152,9 +153,40 @@ const appLightBg = Color(0xFFF8FAFC);
 const appLightBorder = Color(0xFFE2E8F0);
 const appMuted = Color(0xFF64748B);
 
+enum AppThemePreference {
+  dark,
+  light,
+  galaxy;
+
+  AppThemePreference get next {
+    return switch (this) {
+      AppThemePreference.dark => AppThemePreference.light,
+      AppThemePreference.light => AppThemePreference.galaxy,
+      AppThemePreference.galaxy => AppThemePreference.dark,
+    };
+  }
+
+  String get storageValue {
+    return switch (this) {
+      AppThemePreference.dark => 'dark',
+      AppThemePreference.light => 'light',
+      AppThemePreference.galaxy => 'galaxy',
+    };
+  }
+
+  static AppThemePreference fromStorage(String? value) {
+    return switch (value) {
+      'light' => AppThemePreference.light,
+      'galaxy' || 'liquidGlass' => AppThemePreference.galaxy,
+      _ => AppThemePreference.dark,
+    };
+  }
+}
+
 class AppPalette {
   const AppPalette({
     required this.isDark,
+    this.isGalaxy = false,
     required this.scaffold,
     required this.surface,
     required this.surfaceSoft,
@@ -172,9 +204,12 @@ class AppPalette {
     required this.errorBorder,
     required this.errorText,
     required this.shadow,
+    this.glowColor = const Color(0x33A855F7),
   });
 
   final bool isDark;
+  final bool isGalaxy;
+  bool get isGlass => isGalaxy;
   final Color scaffold;
   final Color surface;
   final Color surfaceSoft;
@@ -192,13 +227,15 @@ class AppPalette {
   final Color errorBorder;
   final Color errorText;
   final Color shadow;
+  final Color glowColor;
 
   static const light = AppPalette(
     isDark: false,
+    isGalaxy: false,
     scaffold: appLightBg,
     surface: Colors.white,
     surfaceSoft: Color(0xFFEFF6FF),
-    border: appLightBorder,
+    border: Colors.transparent,
     text: appNavy,
     muted: appMuted,
     primary: appNavy,
@@ -216,10 +253,11 @@ class AppPalette {
 
   static const dark = AppPalette(
     isDark: true,
+    isGalaxy: false,
     scaffold: appNavy,
     surface: Color(0xFF0F172A),
     surfaceSoft: Color(0xFF1E2F4F),
-    border: Color(0xFF263650),
+    border: Colors.transparent,
     text: Color(0xFFE5E7EB),
     muted: Color(0xFF94A3B8),
     primary: appSky,
@@ -234,9 +272,67 @@ class AppPalette {
     errorText: Color(0xFFFFCCD5),
     shadow: Color(0x66000000),
   );
+
+  static const galaxy = AppPalette(
+    isDark: true,
+    isGalaxy: true,
+    scaffold: Color(0xFF0E0B1A),
+    surface: Color(0xFF151026),
+    surfaceSoft: Color(0xFF1D1736),
+    border: Colors.transparent,
+    text: Color(0xFFF8FAFC),
+    muted: Color(0xFFA5B4FC),
+    primary: Color(0xFF6366F1),
+    primarySoft: Color(0xFF818CF8),
+    onPrimary: Colors.white,
+    accent: Color(0xFF4F46E5),
+    accentSoft: Color(0xFF1E1B4B),
+    inputFill: Color(0xFF0D0A18),
+    inputBorder: Color(0xFF2E2654),
+    errorBg: Color(0xFF2D121B),
+    errorBorder: Color(0xFF881337),
+    errorText: Color(0xFFFDA4AF),
+    shadow: Color(0x80000000),
+    glowColor: Color(0x384F46E5),
+  );
+
+  static const liquidGlass = galaxy;
+}
+
+class AppThemeScope extends InheritedWidget {
+  const AppThemeScope({
+    required this.preference,
+    required this.palette,
+    required this.toggleTheme,
+    required super.child,
+    super.key,
+  });
+
+  final AppThemePreference preference;
+  final AppPalette palette;
+  final VoidCallback toggleTheme;
+
+  static AppThemeScope of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<AppThemeScope>();
+    assert(scope != null, 'No AppThemeScope found in context');
+    return scope!;
+  }
+
+  static AppThemeScope? maybeOf(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<AppThemeScope>();
+  }
+
+  @override
+  bool updateShouldNotify(covariant AppThemeScope oldWidget) {
+    return oldWidget.preference != preference || oldWidget.palette != palette;
+  }
 }
 
 AppPalette appPalette(BuildContext context) {
+  final scope = AppThemeScope.maybeOf(context);
+  if (scope != null) {
+    return scope.palette;
+  }
   return Theme.of(context).brightness == Brightness.dark
       ? AppPalette.dark
       : AppPalette.light;
@@ -335,15 +431,11 @@ class AppToastMessage extends StatelessWidget {
     final background = isError
         ? (palette.isDark ? const Color(0xFF3F1D2B) : const Color(0xFFFFF1F2))
         : (palette.isDark ? const Color(0xFF073B2F) : const Color(0xFFECFDF5));
-    final border = isError
-        ? (palette.isDark ? const Color(0xFF9F1239) : const Color(0xFFFECDD3))
-        : (palette.isDark ? const Color(0xFF047857) : const Color(0xFFA7F3D0));
 
     return DecoratedBox(
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: border.withValues(alpha: 0.9)),
         boxShadow: [
           BoxShadow(
             color: palette.shadow.withValues(
@@ -413,7 +505,7 @@ ThemeData appTheme(Brightness brightness) {
         ),
     scaffoldBackgroundColor: palette.scaffold,
     appBarTheme: AppBarTheme(
-      backgroundColor: brightness == Brightness.dark ? appDarkPanel : Colors.white,
+      backgroundColor: palette.scaffold,
       foregroundColor: brightness == Brightness.dark ? Colors.white : appNavy,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
@@ -460,10 +552,18 @@ ThemeData appTheme(Brightness brightness) {
         elevation: 0,
       ),
     ),
+    cardTheme: CardThemeData(
+      color: palette.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide.none,
+      ),
+    ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: palette.text,
-        side: BorderSide(color: palette.border),
+        side: BorderSide(color: palette.inputBorder),
         minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
@@ -477,8 +577,101 @@ ThemeData appTheme(Brightness brightness) {
   );
 }
 
+ThemeData appGalaxyTheme() {
+  const palette = AppPalette.galaxy;
+
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: palette.primary,
+      brightness: Brightness.dark,
+    ).copyWith(
+      primary: palette.primary,
+      onPrimary: palette.onPrimary,
+      surface: palette.surface,
+      onSurface: palette.text,
+      error: palette.errorText,
+    ),
+    scaffoldBackgroundColor: palette.scaffold,
+    appBarTheme: AppBarTheme(
+      backgroundColor: palette.scaffold,
+      foregroundColor: Colors.white,
+      elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      centerTitle: false,
+      titleTextStyle: TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.w900,
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: palette.inputFill,
+      hintStyle: TextStyle(color: palette.muted, fontSize: 14),
+      labelStyle: TextStyle(color: palette.muted),
+      prefixIconColor: palette.primary,
+      suffixIconColor: palette.primary,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: palette.inputBorder),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: palette.accent, width: 1.4),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: palette.errorBorder),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide(color: palette.errorText, width: 1.4),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: palette.primary,
+        foregroundColor: palette.onPrimary,
+        disabledBackgroundColor: palette.primary.withValues(alpha: 0.40),
+        disabledForegroundColor: palette.onPrimary.withValues(alpha: 0.60),
+        minimumSize: const Size(64, 52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        elevation: 0,
+      ),
+    ),
+    cardTheme: CardThemeData(
+      color: palette.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide.none,
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: palette.text,
+        side: BorderSide(color: palette.inputBorder),
+        minimumSize: const Size.fromHeight(48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    ),
+    cardColor: palette.surface,
+    dividerColor: palette.border,
+    iconTheme: IconThemeData(color: palette.text),
+    textTheme: ThemeData(
+      brightness: Brightness.dark,
+    ).textTheme.apply(bodyColor: palette.text, displayColor: palette.text),
+  );
+}
+
 final appLightTheme = appTheme(Brightness.light);
 final appDarkTheme = appTheme(Brightness.dark);
+final appGalaxyThemeData = appGalaxyTheme();
+final appLiquidGlassThemeData = appGalaxyThemeData;
+ThemeData appLiquidGlassTheme() => appGalaxyTheme();
 
 void main() {
   runApp(const EmpaqueApp());
@@ -494,7 +687,8 @@ class EmpaqueApp extends StatefulWidget {
 class _EmpaqueAppState extends State<EmpaqueApp> {
   late final AuthApi _authApi;
   bool _initializing = true;
-  bool _darkMode = false;
+  AppThemePreference _themePreference = AppThemePreference.dark;
+  bool get _darkMode => _themePreference == AppThemePreference.dark;
   bool _logosPrecached = false;
   String? _token;
   UserProfile? _user;
@@ -526,12 +720,12 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     );
     final storedTheme = await secureStorage.read(key: themeStorageKey);
     final storedServerUrl = await secureStorage.read(key: serverUrlStorageKey);
-    final darkMode = storedTheme == 'dark';
+    final preference = AppThemePreference.fromStorage(storedTheme);
     final token = await secureStorage.read(key: 'auth_token');
 
-    if (mounted && _darkMode != darkMode) {
+    if (mounted && _themePreference != preference) {
       setState(() {
-        _darkMode = darkMode;
+        _themePreference = preference;
       });
     }
 
@@ -549,7 +743,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
       if (!mounted) return;
 
       setState(() {
-        _darkMode = darkMode;
+        _themePreference = preference;
         _initializing = false;
       });
 
@@ -564,7 +758,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
       if (!mounted) return;
 
       setState(() {
-        _darkMode = darkMode;
+        _themePreference = preference;
         _token = token;
         _user = user;
         _initializing = false;
@@ -578,7 +772,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
       if (!mounted) return;
 
       setState(() {
-        _darkMode = darkMode;
+        _themePreference = preference;
         _initializing = false;
       });
 
@@ -587,20 +781,20 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
   }
 
   void _toggleTheme() {
-    final nextMode = !_darkMode;
+    final nextPref = _themePreference.next;
 
     setState(() {
-      _darkMode = nextMode;
+      _themePreference = nextPref;
     });
 
-    unawaited(_persistTheme(nextMode));
+    unawaited(_persistTheme(nextPref));
   }
 
-  Future<void> _persistTheme(bool darkMode) async {
+  Future<void> _persistTheme(AppThemePreference preference) async {
     try {
       await secureStorage.write(
         key: themeStorageKey,
-        value: darkMode ? 'dark' : 'light',
+        value: preference.storageValue,
       );
     } catch (_) {
       // Theme changes should stay instant even if persistence fails.
@@ -680,36 +874,50 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     final token = _token;
     final user = _user;
 
-    return MaterialApp(
-      navigatorKey: appNavigatorKey,
-      debugShowCheckedModeBanner: false,
-      title: 'Empaque QR',
-      theme: appLightTheme,
-      darkTheme: appDarkTheme,
-      themeMode: _darkMode ? ThemeMode.dark : ThemeMode.light,
-      themeAnimationDuration: const Duration(milliseconds: 180),
-      themeAnimationCurve: Curves.easeOutCubic,
-      home: _initializing
-          ? const SplashPage()
-          : user == null || token == null
-          ? LoginPage(
-              authApi: _authApi,
-              onLogin: _handleLogin,
-              onServerUrlChanged: _handleServerUrlChanged,
-              isDarkMode: _darkMode,
-              onToggleTheme: _toggleTheme,
-            )
-          : HomePage(
-              authApi: _authApi,
-              token: token,
-              user: user,
-              onUserUpdated: _handleUserUpdated,
-              onLogout: _handleLogout,
-              isDarkMode: _darkMode,
-              onToggleTheme: _toggleTheme,
-              serverUrl: currentApiBaseUrl(),
-              onServerUrlChanged: _handleServerUrlChanged,
-            ),
+    final currentPalette = switch (_themePreference) {
+      AppThemePreference.dark => AppPalette.dark,
+      AppThemePreference.light => AppPalette.light,
+      AppThemePreference.galaxy => AppPalette.galaxy,
+    };
+    final currentTheme = switch (_themePreference) {
+      AppThemePreference.dark => appDarkTheme,
+      AppThemePreference.light => appLightTheme,
+      AppThemePreference.galaxy => appGalaxyThemeData,
+    };
+
+    return AppThemeScope(
+      preference: _themePreference,
+      palette: currentPalette,
+      toggleTheme: _toggleTheme,
+      child: MaterialApp(
+        navigatorKey: appNavigatorKey,
+        debugShowCheckedModeBanner: false,
+        title: 'Empaque QR',
+        theme: currentTheme,
+        themeAnimationDuration: const Duration(milliseconds: 180),
+        themeAnimationCurve: Curves.easeOutCubic,
+        home: _initializing
+            ? const SplashPage()
+            : user == null || token == null
+            ? LoginPage(
+                authApi: _authApi,
+                onLogin: _handleLogin,
+                onServerUrlChanged: _handleServerUrlChanged,
+                isDarkMode: _darkMode,
+                onToggleTheme: _toggleTheme,
+              )
+            : HomePage(
+                authApi: _authApi,
+                token: token,
+                user: user,
+                onUserUpdated: _handleUserUpdated,
+                onLogout: _handleLogout,
+                isDarkMode: _darkMode,
+                onToggleTheme: _toggleTheme,
+                serverUrl: currentApiBaseUrl(),
+                onServerUrlChanged: _handleServerUrlChanged,
+              ),
+      ),
     );
   }
 }
@@ -792,9 +1000,19 @@ class _SplashPageState extends State<SplashPage>
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: palette.isDark
-                ? const [appNavy, Color(0xFF0F172A), appNavySoft]
-                : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)],
+            colors: palette.isGalaxy
+                ? const [
+                    Color(0xFF0E0B1A),
+                    Color(0xFF151026),
+                    Color(0xFF0E0B1A),
+                  ]
+                : (palette.isDark
+                    ? const [appNavy, Color(0xFF0F172A), appNavySoft]
+                    : const [
+                        Colors.white,
+                        Color(0xFFF8FAFC),
+                        Color(0xFFEFF6FF),
+                      ]),
             stops: const [0, 0.56, 1],
           ),
         ),
@@ -805,9 +1023,11 @@ class _SplashPageState extends State<SplashPage>
               right: -70,
               child: LoginGlow(
                 size: 260,
-                color: palette.isDark
-                    ? const Color(0x2938BDF8)
-                    : const Color(0x2438BDF8),
+                color: palette.isGalaxy
+                    ? const Color(0x356366F1)
+                    : (palette.isDark
+                        ? const Color(0x2938BDF8)
+                        : const Color(0x2438BDF8)),
               ),
             ),
             Positioned(
@@ -815,9 +1035,11 @@ class _SplashPageState extends State<SplashPage>
               bottom: -70,
               child: LoginGlow(
                 size: 300,
-                color: palette.isDark
-                    ? const Color(0x222563EB)
-                    : const Color(0x162563EB),
+                color: palette.isGalaxy
+                    ? const Color(0x284F46E5)
+                    : (palette.isDark
+                        ? const Color(0x222563EB)
+                        : const Color(0x162563EB)),
               ),
             ),
             Center(
@@ -839,9 +1061,11 @@ class _SplashPageState extends State<SplashPage>
                               child: CustomPaint(
                                 foregroundPainter: SplashFramePainter(
                                   progress: _frameProgress.value,
-                                  color: palette.isDark
-                                      ? appSkyLight
-                                      : palette.primary,
+                                  color: palette.isGalaxy
+                                      ? palette.primary
+                                      : (palette.isDark
+                                          ? appSkyLight
+                                          : palette.primary),
                                 ),
                                 child: Padding(
                                   padding: const EdgeInsets.all(28),
@@ -895,8 +1119,14 @@ class _SplashPageState extends State<SplashPage>
                             borderRadius: BorderRadius.circular(999),
                             child: LinearProgressIndicator(
                               minHeight: 3,
-                              color: palette.accent,
-                              backgroundColor: palette.border,
+                              color: palette.isGalaxy
+                                  ? palette.primary
+                                  : palette.accent,
+                              backgroundColor: palette.isGalaxy
+                                  ? const Color(0xFF241C40)
+                                  : (palette.isDark
+                                      ? const Color(0xFF1E293B)
+                                      : const Color(0xFFE2E8F0)),
                             ),
                           ),
                         ),
@@ -1098,175 +1328,180 @@ class _LoginPageState extends State<LoginPage> {
                         },
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 430),
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: palette.surface.withValues(alpha: 0.98),
-                              borderRadius: BorderRadius.circular(28),
-                              border: Border.all(
-                                color: palette.border.withValues(alpha: 0.85),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: palette.isGalaxy
+                                    ? const Color(0xFF0F0E17)
+                                    : palette.surface.withValues(alpha: 0.98),
+                                borderRadius: BorderRadius.circular(28),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: palette.isGalaxy
+                                        ? const Color(0x384F46E5)
+                                        : const Color(0x42111C33),
+                                    blurRadius: palette.isGalaxy ? 32 : 50,
+                                    offset: const Offset(0, 20),
+                                  ),
+                                ],
                               ),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x42111C33),
-                                  blurRadius: 50,
-                                  offset: Offset(0, 24),
-                                ),
-                              ],
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                22,
-                                22,
-                                22,
-                                18,
-                              ),
-                              child: AutofillGroup(
-                                child: Form(
-                                  key: _formKey,
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      const LoginBrandHeader(),
-                                      const SizedBox(height: 24),
-                                      const LoginFieldLabel(
-                                        'Correo electronico',
-                                      ),
-                                      const SizedBox(height: 8),
-                                      TextFormField(
-                                        controller: _emailController,
-                                        keyboardType:
-                                            TextInputType.emailAddress,
-                                        autofillHints: const [
-                                          AutofillHints.email,
-                                        ],
-                                        textInputAction: TextInputAction.next,
-                                        decoration: _inputDecoration(
-                                          hintText: 'correo@ejemplo.com',
-                                          icon: Icons.alternate_email_rounded,
-                                        ),
-                                        validator: (value) {
-                                          if (value == null ||
-                                              value.trim().isEmpty) {
-                                            return 'Ingresa tu correo.';
-                                          }
-
-                                          if (!value.contains('@')) {
-                                            return 'Ingresa un correo valido.';
-                                          }
-
-                                          return null;
-                                        },
-                                      ),
-                                      const SizedBox(height: 16),
-                                      const LoginFieldLabel('Contrasena'),
-                                      const SizedBox(height: 8),
-                                      TextFormField(
-                                        controller: _passwordController,
-                                        obscureText: _obscurePassword,
-                                        autofillHints: const [
-                                          AutofillHints.password,
-                                        ],
-                                        textInputAction: TextInputAction.done,
-                                        onFieldSubmitted: (_) => _submit(),
-                                        decoration: _inputDecoration(
-                                          hintText: 'Ingresa tu contrasena',
-                                          icon: Icons.lock_outline_rounded,
-                                          suffixIcon: IconButton(
-                                            onPressed: () {
-                                              setState(() {
-                                                _obscurePassword =
-                                                    !_obscurePassword;
-                                              });
-                                            },
-                                            color: palette.primary,
-                                            icon: Icon(
-                                              _obscurePassword
-                                                  ? Icons.visibility_outlined
-                                                  : Icons
-                                                        .visibility_off_outlined,
-                                            ),
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    22,
+                                    22,
+                                    22,
+                                    18,
+                                  ),
+                                  child: AutofillGroup(
+                                    child: Form(
+                                      key: _formKey,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          const LoginBrandHeader(),
+                                          const SizedBox(height: 24),
+                                          const LoginFieldLabel(
+                                            'Correo electronico',
                                           ),
-                                        ),
-                                        validator: (value) {
-                                          if (value == null || value.isEmpty) {
-                                            return 'Ingresa tu contrasena.';
-                                          }
+                                          const SizedBox(height: 8),
+                                          TextFormField(
+                                            controller: _emailController,
+                                            keyboardType:
+                                                TextInputType.emailAddress,
+                                            autofillHints: const [
+                                              AutofillHints.email,
+                                            ],
+                                            textInputAction: TextInputAction.next,
+                                            decoration: _inputDecoration(
+                                              hintText: 'correo@ejemplo.com',
+                                              icon: Icons.alternate_email_rounded,
+                                            ),
+                                            validator: (value) {
+                                              if (value == null ||
+                                                  value.trim().isEmpty) {
+                                                return 'Ingresa tu correo.';
+                                              }
 
-                                          return null;
-                                        },
-                                      ),
-                                      AnimatedSwitcher(
-                                        duration: const Duration(
-                                          milliseconds: 220,
-                                        ),
-                                        child: _error == null
-                                            ? const SizedBox.shrink()
-                                            : Padding(
-                                                padding: const EdgeInsets.only(
-                                                  top: 14,
-                                                ),
-                                                child: ErrorBox(
-                                                  message: _error!,
+                                              if (!value.contains('@')) {
+                                                return 'Ingresa un correo valido.';
+                                              }
+
+                                              return null;
+                                            },
+                                          ),
+                                          const SizedBox(height: 16),
+                                          const LoginFieldLabel('Contrasena'),
+                                          const SizedBox(height: 8),
+                                          TextFormField(
+                                            controller: _passwordController,
+                                            obscureText: _obscurePassword,
+                                            autofillHints: const [
+                                              AutofillHints.password,
+                                            ],
+                                            textInputAction: TextInputAction.done,
+                                            onFieldSubmitted: (_) => _submit(),
+                                            decoration: _inputDecoration(
+                                              hintText: 'Ingresa tu contrasena',
+                                              icon: Icons.lock_outline_rounded,
+                                              suffixIcon: IconButton(
+                                                onPressed: () {
+                                                  setState(() {
+                                                    _obscurePassword =
+                                                        !_obscurePassword;
+                                                  });
+                                                },
+                                                color: palette.primary,
+                                                icon: Icon(
+                                                  _obscurePassword
+                                                      ? Icons.visibility_outlined
+                                                      : Icons
+                                                            .visibility_off_outlined,
                                                 ),
                                               ),
-                                      ),
-                                      const SizedBox(height: 22),
-                                      FilledButton(
-                                        onPressed: _loading ? null : _submit,
-                                        style: FilledButton.styleFrom(
-                                          minimumSize: const Size.fromHeight(
-                                            52,
+                                            ),
+                                            validator: (value) {
+                                              if (value == null || value.isEmpty) {
+                                                return 'Ingresa tu contrasena.';
+                                              }
+
+                                              return null;
+                                            },
                                           ),
-                                          backgroundColor: palette.primary,
-                                          foregroundColor: palette.onPrimary,
-                                          disabledBackgroundColor: palette
-                                              .primary
-                                              .withValues(alpha: 0.55),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              18,
+                                          AnimatedSwitcher(
+                                            duration: const Duration(
+                                              milliseconds: 220,
+                                            ),
+                                            child: _error == null
+                                                ? const SizedBox.shrink()
+                                                : Padding(
+                                                    padding: const EdgeInsets.only(
+                                                      top: 14,
+                                                    ),
+                                                    child: ErrorBox(
+                                                      message: _error!,
+                                                    ),
+                                                  ),
+                                          ),
+                                          const SizedBox(height: 22),
+                                          FilledButton(
+                                            onPressed: _loading ? null : _submit,
+                                            style: FilledButton.styleFrom(
+                                              minimumSize: const Size.fromHeight(
+                                                52,
+                                              ),
+                                              backgroundColor: palette.primary,
+                                              foregroundColor: palette.onPrimary,
+                                              disabledBackgroundColor: palette
+                                                  .primary
+                                                  .withValues(alpha: 0.55),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(
+                                                  18,
+                                                ),
+                                              ),
+                                              elevation: 0,
+                                            ),
+                                            child: AnimatedSwitcher(
+                                              duration: const Duration(
+                                                milliseconds: 180,
+                                              ),
+                                              child: _loading
+                                                  ? SizedBox(
+                                                      key: ValueKey('loader'),
+                                                      width: 22,
+                                                      height: 22,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2.5,
+                                                            color:
+                                                                palette.onPrimary,
+                                                          ),
+                                                    )
+                                                  : const Text(
+                                                      'Iniciar sesion',
+                                                      key: ValueKey('text'),
+                                                      style: TextStyle(
+                                                        fontWeight: FontWeight.w800,
+                                                      ),
+                                                    ),
                                             ),
                                           ),
-                                          elevation: 0,
-                                        ),
-                                        child: AnimatedSwitcher(
-                                          duration: const Duration(
-                                            milliseconds: 180,
+                                          const SizedBox(height: 18),
+                                          Text(
+                                            'Plasencia · Area de Empaque',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color: palette.muted,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
-                                          child: _loading
-                                              ? SizedBox(
-                                                  key: ValueKey('loader'),
-                                                  width: 22,
-                                                  height: 22,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 2.5,
-                                                        color:
-                                                            palette.onPrimary,
-                                                      ),
-                                                )
-                                              : const Text(
-                                                  'Iniciar sesion',
-                                                  key: ValueKey('text'),
-                                                  style: TextStyle(
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                                ),
-                                        ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 18),
-                                      Text(
-                                        'Plasencia · Area de Empaque',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          color: palette.muted,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1275,7 +1510,6 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                     ),
-                  ),
                 );
               },
             ),
@@ -1307,11 +1541,6 @@ class _LoginPageState extends State<LoginPage> {
                       height: 46,
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: palette.isDark
-                              ? Colors.white.withValues(alpha: 0.16)
-                              : palette.border,
-                        ),
                       ),
                       child: Icon(
                         Icons.admin_panel_settings_rounded,
@@ -1451,7 +1680,7 @@ class _AdminServerAccessPageState extends State<AdminServerAccessPage> {
                     color: palette.surface,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(22),
-                      side: BorderSide(color: palette.border),
+                      side: BorderSide.none,
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -1505,9 +1734,11 @@ class LoginBackground extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: palette.isDark
-              ? const [Color(0xFF0B1220), Color(0xFF0F172A), appDarkPanel]
-              : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)],
+          colors: palette.isGalaxy
+              ? const [Color(0xFF070709), Color(0xFF0E0C16), Color(0xFF070709)]
+              : (palette.isDark
+                  ? const [Color(0xFF0B1220), Color(0xFF0F172A), appDarkPanel]
+                  : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)]),
           stops: const [0, 0.52, 1],
         ),
       ),
@@ -1518,9 +1749,11 @@ class LoginBackground extends StatelessWidget {
             left: -80,
             child: LoginGlow(
               size: 230,
-              color: palette.isDark
-                  ? const Color(0x2438BDF8)
-                  : const Color(0x2038BDF8),
+              color: palette.isGalaxy
+                  ? const Color(0x228B5CF6)
+                  : (palette.isDark
+                      ? const Color(0x2438BDF8)
+                      : const Color(0x2038BDF8)),
             ),
           ),
           Positioned(
@@ -1528,9 +1761,11 @@ class LoginBackground extends StatelessWidget {
             bottom: 40,
             child: LoginGlow(
               size: 280,
-              color: palette.isDark
-                  ? const Color(0x332563EB)
-                  : const Color(0x142563EB),
+              color: palette.isGalaxy
+                  ? const Color(0x226D28D9)
+                  : (palette.isDark
+                      ? const Color(0x332563EB)
+                      : const Color(0x142563EB)),
             ),
           ),
           Positioned(
@@ -2338,30 +2573,184 @@ class AppNotificationButton extends StatelessWidget {
 
 class ThemeToggleButton extends StatelessWidget {
   const ThemeToggleButton({
-    required this.isDarkMode,
+    this.isDarkMode = false,
+    this.preference,
     required this.onPressed,
     this.compact = false,
     super.key,
   });
 
   final bool isDarkMode;
+  final AppThemePreference? preference;
   final VoidCallback onPressed;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
+    final scope = AppThemeScope.maybeOf(context);
+    final currentPref = preference ??
+        scope?.preference ??
+        (palette.isGalaxy
+            ? AppThemePreference.galaxy
+            : (isDarkMode ? AppThemePreference.dark : AppThemePreference.light));
+
+    final iconSize = compact ? 22.0 : 24.0;
+
+    // Iconos con sentido según el tema actual:
+    // Oscuro: Luna plateada
+    // Claro: Sol en tono slate neutral (NO amarillo)
+    // Galaxy: Hermosa galaxia morada cósmica con núcleo brillante y brazos espirales
+    final (iconWidget, tooltip) = switch (currentPref) {
+      AppThemePreference.dark => (
+        Icon(
+          Icons.dark_mode_rounded,
+          color: const Color(0xFFCBD5E1),
+          size: iconSize,
+        ),
+        'Tema oscuro (Luna) • Toca para cambiar a Claro',
+      ),
+      AppThemePreference.light => (
+        Icon(
+          Icons.light_mode_rounded,
+          color: const Color(0xFF334155),
+          size: iconSize,
+        ),
+        'Tema claro (Sol) • Toca para cambiar a Galaxy Space',
+      ),
+      AppThemePreference.galaxy => (
+        _GalaxyThemeIconWidget(size: iconSize),
+        'Tema Galaxy Space (Galaxia morada) • Toca para cambiar a Oscuro',
+      ),
+    };
 
     return IconButton(
-      tooltip: isDarkMode ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro',
+      tooltip: tooltip,
       onPressed: onPressed,
-      icon: Icon(
-        isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-        color: isDarkMode ? const Color(0xFF38BDF8) : palette.text,
-        size: compact ? 22 : 24,
+      icon: iconWidget,
+    );
+  }
+}
+
+class _GalaxyThemeIconWidget extends StatelessWidget {
+  const _GalaxyThemeIconWidget({this.size = 24});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(
+        painter: const _GalaxyThemeIconPainter(),
       ),
     );
   }
+}
+
+class _GalaxyThemeIconPainter extends CustomPainter {
+  const _GalaxyThemeIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final scale = size.width / 24.0;
+
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.rotate(-28 * math.pi / 180);
+    canvas.scale(scale, scale);
+
+    // 1. Halo difuso galáctico
+    final haloPaint = Paint()
+      ..shader = ui.Gradient.radial(
+        Offset.zero,
+        10.0,
+        [
+          const Color(0xFFFFFFFF).withValues(alpha: 0.55),
+          const Color(0xFFA855F7).withValues(alpha: 0.35),
+          const Color(0xFF6366F1).withValues(alpha: 0.0),
+        ],
+        [0.0, 0.45, 1.0],
+      );
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset.zero, width: 20, height: 9.5),
+      haloPaint,
+    );
+
+    // 2. Brazo espiral 1
+    final arm1Paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..shader = ui.Gradient.linear(
+        const Offset(-9, -4.5),
+        const Offset(9, 4.5),
+        [
+          const Color(0xFFFFFFFF),
+          const Color(0xFFE9D5FF),
+          const Color(0xFFA855F7),
+          const Color(0xFF6366F1),
+        ],
+        [0.0, 0.25, 0.65, 1.0],
+      );
+
+    final path1 = Path()
+      ..moveTo(0, 0)
+      ..cubicTo(2.0, -1.5, 6.5, -3.5, 9.0, -0.5)
+      ..cubicTo(10.5, 1.5, 8.5, 4.0, 5.0, 4.25)
+      ..cubicTo(2.5, 4.4, 0.0, 3.5, -2.5, 2.5);
+    canvas.drawPath(path1, arm1Paint);
+
+    // 3. Brazo espiral 2 (simétrico)
+    final arm2Paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round
+      ..shader = ui.Gradient.linear(
+        const Offset(9, 4.5),
+        const Offset(-9, -4.5),
+        [
+          const Color(0xFFFFFFFF),
+          const Color(0xFFE9D5FF),
+          const Color(0xFFA855F7),
+          const Color(0xFF6366F1),
+        ],
+        [0.0, 0.25, 0.65, 1.0],
+      );
+
+    final path2 = Path()
+      ..moveTo(0, 0)
+      ..cubicTo(-2.0, 1.5, -6.5, 3.5, -9.0, 0.5)
+      ..cubicTo(-10.5, -1.5, -8.5, -4.0, -5.0, -4.25)
+      ..cubicTo(-2.5, -4.4, 0.0, -3.5, 2.5, -2.5);
+    canvas.drawPath(path2, arm2Paint);
+
+    // 4. Núcleo central luminoso
+    final coreGlowPaint = Paint()
+      ..color = const Color(0xFFC084FC).withValues(alpha: 0.85);
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset.zero, width: 6.5, height: 4.0),
+      coreGlowPaint,
+    );
+
+    final corePaint = Paint()..color = Colors.white;
+    canvas.drawCircle(Offset.zero, 1.4, corePaint);
+
+    // 5. Partículas de polvo estelar cósmico
+    final starPaint = Paint()
+      ..color = const Color(0xFFE9D5FF).withValues(alpha: 0.9);
+    canvas.drawCircle(const Offset(7.5, -3.5), 0.65, starPaint);
+    canvas.drawCircle(const Offset(-7.5, 3.5), 0.65, starPaint);
+    canvas.drawCircle(const Offset(4.5, 4.0), 0.5, starPaint);
+    canvas.drawCircle(const Offset(-4.5, -4.0), 0.5, starPaint);
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class HomePage extends StatelessWidget {
@@ -2623,109 +3012,138 @@ class AdminMainHomeSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(8, 20, 8, 112),
-      children: [
-        Text(
-          'Seguimiento administrativo',
-          style: TextStyle(
-            color: palette.text,
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // En ScanHomeSection el contenido termina en ~582px con padding inferior de 112.
+        // Para que las 3 filas de tarjetas de admin terminen en la misma posicion exacta (~582px):
+        final cardWidth = (constraints.maxWidth - 16 - 8) / 2;
+        // Altura objetivo de tarjeta para igualar exactamente la pantalla no-admin: ~165px
+        const targetHeight = 165.0;
+        final ratio = (cardWidth / targetHeight).clamp(0.70, 1.60);
+
+        return SingleChildScrollView(
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(8, 18, 8, 112),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Seguimiento administrativo',
+                style: TextStyle(
+                  color: palette.text,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              AdminAccessGrid(
+                childAspectRatio: ratio,
+                items: [
+                  AdminAccessItem(
+                    icon: Icons.qr_code_2_rounded,
+                    subtitle: 'Seguimiento',
+                    title: 'Seguimiento de viñeta',
+                    tone: 0,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              VinetaSeguimientoPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                  AdminAccessItem(
+                    icon: Icons.leaderboard_rounded,
+                    subtitle: 'Ranking',
+                    title: 'Ranking de empleados',
+                    tone: 1,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              EmployeeSeguimientoPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Registro de viñetas',
+                style: TextStyle(
+                  color: palette.text,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              AdminAccessGrid(
+                childAspectRatio: ratio,
+                items: [
+                  AdminAccessItem(
+                    icon: Icons.qr_code_scanner_rounded,
+                    subtitle: 'Viñeta QR',
+                    title: 'Escanear por QR',
+                    tone: 0,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              VinetaScannerPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                  AdminAccessItem(
+                    icon: Icons.tag_rounded,
+                    subtitle: 'Código viñeta',
+                    title: 'Buscar por código',
+                    tone: 1,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              VinetaCodeSearchPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                  AdminAccessItem(
+                    icon: Icons.dynamic_feed_rounded,
+                    subtitle: 'Viñetas',
+                    title: 'Escaneo múltiple',
+                    tone: 2,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              MultiVinetaScanPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                  AdminAccessItem(
+                    icon: Icons.access_time_filled_rounded,
+                    subtitle: 'Empleados',
+                    title: 'Horas ordinarias',
+                    tone: 3,
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              EmployeeHoursSearchPage(authApi: authApi, token: token),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 12),
-        AdminAccessGrid(
-          items: [
-            AdminAccessItem(
-              icon: Icons.qr_code_2_rounded,
-              title: 'Seguimiento de viñeta',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        VinetaSeguimientoPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-            AdminAccessItem(
-              icon: Icons.emoji_events_rounded,
-              title: 'Ranking de empleados',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        EmployeeSeguimientoPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text(
-          'Registro de viñetas',
-          style: TextStyle(
-            color: palette.text,
-            fontSize: 18,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        const SizedBox(height: 12),
-        AdminAccessGrid(
-          items: [
-            AdminAccessItem(
-              icon: Icons.qr_code_scanner_rounded,
-              title: 'Escanear por QR',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        VinetaScannerPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-            AdminAccessItem(
-              icon: Icons.tag_rounded,
-              title: 'Buscar por código',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        VinetaCodeSearchPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-            AdminAccessItem(
-              icon: Icons.dynamic_feed_rounded,
-              title: 'Escaneo múltiple',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        MultiVinetaScanPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-            AdminAccessItem(
-              icon: Icons.access_time_filled_rounded,
-              title: 'Horas ordinarias',
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        EmployeeHoursSearchPage(authApi: authApi, token: token),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -2734,6 +3152,8 @@ class AdminAccessItem {
   const AdminAccessItem({
     required this.icon,
     required this.title,
+    this.subtitle = '',
+    this.tone = 0,
     this.description = '',
     this.statusLabel = '',
     this.onTap,
@@ -2741,15 +3161,22 @@ class AdminAccessItem {
 
   final IconData icon;
   final String title;
+  final String subtitle;
+  final int tone;
   final String description;
   final String statusLabel;
   final VoidCallback? onTap;
 }
 
 class AdminAccessGrid extends StatelessWidget {
-  const AdminAccessGrid({required this.items, super.key});
+  const AdminAccessGrid({
+    required this.items,
+    this.childAspectRatio = 1.08,
+    super.key,
+  });
 
   final List<AdminAccessItem> items;
+  final double childAspectRatio;
 
   @override
   Widget build(BuildContext context) {
@@ -2758,11 +3185,11 @@ class AdminAccessGrid extends StatelessWidget {
       padding: EdgeInsets.zero,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 1.04,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+        childAspectRatio: childAspectRatio,
       ),
       itemBuilder: (context, index) =>
           AdminAccessCard(item: items[index], index: index),
@@ -2770,109 +3197,165 @@ class AdminAccessGrid extends StatelessWidget {
   }
 }
 
-class AdminAccessCard extends StatelessWidget {
+class AdminAccessCard extends StatefulWidget {
   const AdminAccessCard({required this.item, required this.index, super.key});
 
   final AdminAccessItem item;
   final int index;
 
   @override
+  State<AdminAccessCard> createState() => _AdminAccessCardState();
+}
+
+class _AdminAccessCardState extends State<AdminAccessCard> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
-    final accent = palette.primary;
-    final background = palette.isDark
-        ? [palette.surface, const Color(0xFF13233A)]
-        : [Colors.white, const Color(0xFFF8FBFF)];
+    final item = widget.item;
+    final tone = _OperatorActionTone.resolve(palette, item.tone);
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: item.onTap,
-        borderRadius: BorderRadius.circular(24),
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: background,
-            ),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: palette.border.withValues(alpha: palette.isDark ? 0.9 : 1),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: palette.shadow.withValues(
-                  alpha: palette.isDark ? 0.1 : 0.07,
-                ),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
+    return AnimatedScale(
+      scale: _pressed ? 0.97 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: item.onTap,
+          onTapDown: (_) => _setPressed(true),
+          onTapUp: (_) => _setPressed(false),
+          onTapCancel: () => _setPressed(false),
+          borderRadius: BorderRadius.circular(22),
+          child: Ink(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [tone.background, tone.backgroundAlt],
               ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 46,
-                      height: 46,
-                      decoration: BoxDecoration(
-                        color: accent.withValues(
-                          alpha: palette.isDark ? 0.18 : 0.12,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: palette.isGalaxy
+                      ? const Color(0x334F46E5)
+                      : palette.shadow.withValues(
+                          alpha: palette.isDark ? 0.16 : 0.075,
                         ),
-                        borderRadius: BorderRadius.circular(17),
-                        border: Border.all(
-                          color: accent.withValues(
-                            alpha: palette.isDark ? 0.26 : 0.18,
-                          ),
-                        ),
-                      ),
-                      child: Icon(item.icon, color: accent, size: 25),
-                    ),
-                    const Spacer(),
-                    Container(
-                      width: 30,
-                      height: 30,
-                      decoration: BoxDecoration(
-                        color: palette.surfaceSoft.withValues(alpha: 0.75),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: palette.border),
-                      ),
-                      child: Icon(
-                        Icons.arrow_forward_rounded,
-                        color: palette.muted,
-                        size: 16,
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.text,
-                    fontSize: 15.5,
-                    height: 1.05,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -0.25,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  width: 34,
-                  height: 3,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
+                  blurRadius: palette.isGalaxy ? 16 : 14,
+                  offset: const Offset(0, 5),
                 ),
               ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(22),
+              child: Stack(
+                children: [
+                  Positioned(
+                    right: -24,
+                    top: -14,
+                    child: _OperatorCardAccentPattern(
+                      width: 124,
+                      height: 78,
+                      angle: 0.12,
+                      color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.08 : 0.055),
+                      lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.12 : 0.075),
+                    ),
+                  ),
+                  Positioned(
+                    left: -20,
+                    bottom: -16,
+                    child: _OperatorCardAccentPattern(
+                      width: 98,
+                      height: 62,
+                      angle: -0.10,
+                      color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.06 : 0.035),
+                      lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.09 : 0.050),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: tone.iconBackground,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: palette.shadow.withValues(
+                                      alpha: palette.isDark ? 0.14 : 0.16,
+                                    ),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(item.icon, color: tone.icon, size: 25),
+                            ),
+                            const Spacer(),
+                            Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color: palette.isGalaxy
+                                    ? const Color(0xFF1B1736)
+                                    : (palette.isDark
+                                        ? Colors.white.withValues(alpha: 0.06)
+                                        : palette.surfaceSoft.withValues(alpha: 0.70)),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Icon(
+                                Icons.arrow_forward_rounded,
+                                color: tone.pillIcon,
+                                size: 16,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Spacer(),
+                        if (item.subtitle.isNotEmpty) ...[
+                          Text(
+                            item.subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: tone.subtitle,
+                              fontSize: 11.0,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                        ],
+                        Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: tone.title,
+                            fontSize: 14.5,
+                            height: 1.14,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.25,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -3026,7 +3509,6 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
       decoration: BoxDecoration(
         color: tone.iconBackground,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: tone.iconBorder),
         boxShadow: [
           BoxShadow(
             color: palette.shadow.withValues(
@@ -3097,12 +3579,13 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
                 colors: [tone.background, tone.backgroundAlt],
               ),
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(color: tone.border),
               boxShadow: [
                 BoxShadow(
-                  color: palette.shadow.withValues(
-                    alpha: palette.isDark ? 0.18 : 0.085,
-                  ),
+                  color: palette.isGalaxy
+                      ? const Color(0x334F46E5)
+                      : palette.shadow.withValues(
+                          alpha: palette.isDark ? 0.18 : 0.085,
+                        ),
                   blurRadius: 22,
                   offset: const Offset(0, 11),
                 ),
@@ -3123,8 +3606,8 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
                         height: 96,
                         angle: iconOnLeft ? -0.12 : 0.12,
                         mirror: !iconOnLeft,
-                        color: tone.panel.withValues(alpha: 0.055),
-                        lineColor: tone.panel.withValues(alpha: 0.075),
+                        color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.08 : 0.055),
+                        lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.12 : 0.075),
                       ),
                     ),
                     Positioned(
@@ -3136,8 +3619,8 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
                         height: 80,
                         angle: iconOnLeft ? 0.10 : -0.10,
                         mirror: iconOnLeft,
-                        color: tone.panel.withValues(alpha: 0.035),
-                        lineColor: tone.panel.withValues(alpha: 0.052),
+                        color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.06 : 0.035),
+                        lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.09 : 0.052),
                       ),
                     ),
                     Padding(
@@ -3303,6 +3786,28 @@ class _OperatorActionTone {
   final Color pillIcon;
 
   static _OperatorActionTone resolve(AppPalette palette, int tone) {
+    if (palette.isGalaxy) {
+      const accent = Color(0xFF6366F1);
+      const background = Color(0xFF0F0E17);
+      final backgroundAlt = Color.alphaBlend(
+        accent.withValues(alpha: tone.isEven ? 0.08 : 0.13),
+        const Color(0xFF161426),
+      );
+
+      return _OperatorActionTone(
+        background: background,
+        backgroundAlt: backgroundAlt,
+        panel: accent,
+        border: const Color(0xFF2E2757),
+        title: Colors.white,
+        subtitle: const Color(0xFFA5B4FC),
+        iconBackground: const Color(0xFF1C1838),
+        iconBorder: const Color(0xFF4338CA),
+        icon: accent,
+        pillIcon: const Color(0xFF818CF8),
+      );
+    }
+
     final dark = palette.isDark;
     final accent = dark ? appSky : appNavy;
     final background = dark ? palette.surface : Colors.white;
@@ -3320,15 +3825,13 @@ class _OperatorActionTone {
       background: background,
       backgroundAlt: backgroundAlt,
       panel: accent,
-      border: dark ? Colors.white.withValues(alpha: 0.08) : palette.border,
+      border: Colors.transparent,
       title: dark ? const Color(0xFFF8FAFC) : appNavy,
       subtitle: dark ? const Color(0xFFB8C7D9) : const Color(0xFF334155),
       iconBackground: dark
           ? const Color(0xFF0B172A)
           : appNavy.withValues(alpha: 0.96),
-      iconBorder: dark
-          ? appSky.withValues(alpha: 0.22)
-          : Colors.white.withValues(alpha: 0.4),
+      iconBorder: Colors.transparent,
       icon: dark ? accent : Colors.white,
       pillIcon: accent,
     );
@@ -3366,7 +3869,6 @@ class OperatorInlinePanel extends StatelessWidget {
           colors: [tone.background, tone.backgroundAlt],
         ),
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(color: tone.border),
         boxShadow: [
           BoxShadow(
             color: palette.shadow.withValues(
@@ -3390,7 +3892,6 @@ class OperatorInlinePanel extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: tone.iconBackground,
                     borderRadius: BorderRadius.circular(17),
-                    border: Border.all(color: tone.iconBorder),
                   ),
                   child: Icon(icon, color: tone.icon, size: 24),
                 ),
@@ -3904,7 +4405,7 @@ class EmployeeHoursFiltersCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -3982,7 +4483,7 @@ class EmployeeHoursAccordionCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -4104,9 +4605,7 @@ class EmployeeHoursAccordionCard extends StatelessWidget {
             child: child == null
                 ? const SizedBox.shrink()
                 : DecoratedBox(
-                    decoration: BoxDecoration(
-                      border: Border(top: BorderSide(color: palette.border)),
-                    ),
+                    decoration: const BoxDecoration(),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
                       child: child,
@@ -4458,7 +4957,7 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -4471,12 +4970,12 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                    color: palette.primary.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(15),
                   ),
-                  child: const Icon(
-                    Icons.emoji_events_rounded,
-                    color: Color(0xFFF59E0B),
+                  child: Icon(
+                    Icons.leaderboard_rounded,
+                    color: palette.primary,
                     size: 24,
                   ),
                 ),
@@ -4927,7 +5426,7 @@ class EmployeeSeguimientoSummaryCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -5059,7 +5558,7 @@ class EmployeeSeguimientoActivityList extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -5169,14 +5668,17 @@ class EmployeeRankingPodium extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: palette.border),
       ),
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.emoji_events_rounded, color: Color(0xFFF59E0B), size: 20),
+              Icon(
+                Icons.workspace_premium_rounded,
+                color: palette.primary,
+                size: 20,
+              ),
               const SizedBox(width: 8),
               Text(
                 'Top 3 del Mes',
@@ -5192,42 +5694,47 @@ class EmployeeRankingPodium extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // 2nd Place (Silver)
+              // 2nd Place
               Expanded(
                 child: second != null
                     ? _PodiumColumn(
                         employee: second,
                         rank: 2,
-                        medalColor: const Color(0xFF94A3B8),
-                        accentColor: const Color(0xFF475569),
-                        trophyEmoji: '🥈',
+                        color: palette.isGalaxy
+                            ? const Color(0xFF818CF8)
+                            : (palette.isDark
+                                ? const Color(0xFF60A5FA)
+                                : palette.accent),
+                        icon: Icons.looks_two_rounded,
                         heightExtra: 20,
                       )
                     : const SizedBox.shrink(),
               ),
               const SizedBox(width: 8),
-              // 1st Place (Gold)
+              // 1st Place
               Expanded(
                 child: _PodiumColumn(
                   employee: first,
                   rank: 1,
-                  medalColor: const Color(0xFFF59E0B),
-                  accentColor: const Color(0xFFB45309),
-                  trophyEmoji: '🥇',
+                  color: palette.primary,
+                  icon: Icons.looks_one_rounded,
                   heightExtra: 48,
                   isFirst: true,
                 ),
               ),
               const SizedBox(width: 8),
-              // 3rd Place (Bronze)
+              // 3rd Place
               Expanded(
                 child: third != null
                     ? _PodiumColumn(
                         employee: third,
                         rank: 3,
-                        medalColor: const Color(0xFFD97706),
-                        accentColor: const Color(0xFF78350F),
-                        trophyEmoji: '🥉',
+                        color: palette.isGalaxy
+                            ? const Color(0xFFA5B4FC)
+                            : (palette.isDark
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF64748B)),
+                        icon: Icons.looks_3_rounded,
                         heightExtra: 0,
                       )
                     : const SizedBox.shrink(),
@@ -5244,18 +5751,16 @@ class _PodiumColumn extends StatelessWidget {
   const _PodiumColumn({
     required this.employee,
     required this.rank,
-    required this.medalColor,
-    required this.accentColor,
-    required this.trophyEmoji,
+    required this.color,
+    required this.icon,
     required this.heightExtra,
     this.isFirst = false,
   });
 
   final EmployeeSeguimientoEmployeeSummary employee;
   final int rank;
-  final Color medalColor;
-  final Color accentColor;
-  final String trophyEmoji;
+  final Color color;
+  final IconData icon;
   final double heightExtra;
   final bool isFirst;
 
@@ -5269,19 +5774,18 @@ class _PodiumColumn extends StatelessWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
           decoration: BoxDecoration(
-            color: medalColor.withValues(alpha: 0.18),
+            color: color.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: medalColor.withValues(alpha: 0.45)),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(trophyEmoji, style: const TextStyle(fontSize: 12)),
+              Icon(icon, size: 14, color: color),
               const SizedBox(width: 2),
               Text(
                 '#$rank',
                 style: TextStyle(
-                  color: accentColor,
+                  color: color,
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
                 ),
@@ -5292,7 +5796,7 @@ class _PodiumColumn extends StatelessWidget {
         const SizedBox(height: 6),
         CircleAvatar(
           radius: isFirst ? 24 : 20,
-          backgroundColor: medalColor.withValues(alpha: 0.25),
+          backgroundColor: color.withValues(alpha: 0.25),
           child: CircleAvatar(
             radius: isFirst ? 21 : 17,
             backgroundColor: isFirst ? palette.primary : palette.surfaceSoft,
@@ -5318,20 +5822,9 @@ class _PodiumColumn extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
-        Text(
-          'Cod. ${employee.codigo}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: palette.muted,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
         const SizedBox(height: 6),
         Container(
-          height: 60 + heightExtra,
+          height: 54 + heightExtra,
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 4),
           decoration: BoxDecoration(
@@ -5339,12 +5832,11 @@ class _PodiumColumn extends StatelessWidget {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                medalColor.withValues(alpha: isFirst ? 0.32 : 0.20),
-                medalColor.withValues(alpha: isFirst ? 0.12 : 0.06),
+                color.withValues(alpha: isFirst ? 0.32 : 0.20),
+                color.withValues(alpha: isFirst ? 0.12 : 0.06),
               ],
             ),
             borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-            border: Border.all(color: medalColor.withValues(alpha: 0.4)),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -5363,15 +5855,6 @@ class _PodiumColumn extends StatelessWidget {
                   color: palette.muted,
                   fontSize: 9,
                   fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '${formatIntegerWithCommas(employee.puros)} puros',
-                style: TextStyle(
-                  color: palette.muted,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
@@ -5400,7 +5883,7 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
 
     if (employees.isEmpty) {
       return EmployeeSeguimientoEmptyCard(
-        icon: Icons.emoji_events_outlined,
+        icon: Icons.leaderboard_rounded,
         title: 'Sin empleados en el ranking',
         message:
             'No hay registros de producción para ${scope.label} en ${_monthName(date.month)} ${date.year}.',
@@ -5422,7 +5905,7 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
           color: palette.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(22),
-            side: BorderSide(color: palette.border),
+            side: BorderSide.none,
           ),
           child: Padding(
             padding: const EdgeInsets.all(14),
@@ -5487,153 +5970,98 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
 
-    final (rankColor, rankBg, rankBorder, medalEmoji) = switch (rank) {
-      1 => (
-        const Color(0xFFD97706),
-        const Color(0xFFFEF3C7),
-        const Color(0xFFF59E0B),
-        '🥇'
-      ),
-      2 => (
-        const Color(0xFF475569),
-        const Color(0xFFF1F5F9),
-        const Color(0xFF94A3B8),
-        '🥈'
-      ),
-      3 => (
-        const Color(0xFF92400E),
-        const Color(0xFFFFEDD5),
-        const Color(0xFFD97706),
-        '🥉'
-      ),
-      _ => (palette.muted, palette.surfaceSoft, palette.border, ''),
+    final (c1, c2, c3) = palette.isGalaxy
+        ? (
+            palette.primary,
+            const Color(0xFF818CF8),
+            const Color(0xFFA5B4FC),
+          )
+        : (palette.isDark
+            ? (
+                palette.primary,
+                const Color(0xFF60A5FA),
+                const Color(0xFF94A3B8),
+              )
+            : (
+                palette.primary,
+                palette.accent,
+                const Color(0xFF64748B),
+              ));
+
+    final (rankColor, rankIcon) = switch (rank) {
+      1 => (c1, Icons.looks_one_rounded),
+      2 => (c2, Icons.looks_two_rounded),
+      3 => (c3, Icons.looks_3_rounded),
+      _ => (palette.muted, null),
     };
 
     final isTop3 = rank <= 3;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: isTop3 ? rankBg.withValues(alpha: 0.35) : palette.surfaceSoft,
+        color: isTop3 ? rankColor.withValues(alpha: 0.10) : palette.surfaceSoft,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isTop3 ? rankBorder.withValues(alpha: 0.65) : palette.border,
-          width: isTop3 ? 1.4 : 1.0,
-        ),
       ),
       child: Row(
         children: [
           Container(
-            width: 38,
-            height: 38,
+            width: 36,
+            height: 36,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: isTop3 ? rankBg : palette.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: rankBorder.withValues(alpha: 0.5)),
+              color: isTop3
+                  ? rankColor.withValues(alpha: 0.16)
+                  : palette.surface,
+              borderRadius: BorderRadius.circular(10),
             ),
             child: isTop3
-                ? Text(
-                    medalEmoji,
-                    style: const TextStyle(fontSize: 18),
-                  )
+                ? Icon(rankIcon, color: rankColor, size: 20)
                 : Text(
                     '#$rank',
                     style: TextStyle(
                       color: rankColor,
-                      fontSize: 12.5,
+                      fontSize: 12,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           CircleAvatar(
             radius: 17,
-            backgroundColor: isTop3 ? rankBorder : palette.primary,
-            foregroundColor: isTop3 ? Colors.white : palette.onPrimary,
+            backgroundColor: isTop3
+                ? rankColor.withValues(alpha: 0.22)
+                : palette.surface,
+            foregroundColor: isTop3 ? rankColor : palette.text,
             child: Text(
               employee.initial,
               style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  employee.nombre,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 1.5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: palette.primary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'Cod. ${employee.codigo}',
-                        style: TextStyle(
-                          color: palette.primary,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    if (employee.cargo != null &&
-                        employee.cargo!.trim().isNotEmpty) ...[
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          employee.cargo!.trim(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: palette.muted,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${formatIntegerWithCommas(employee.puros)} puros · ${formatIntegerWithCommas(employee.cajones)} caj.',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: palette.muted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+            child: Text(
+              employee.nombre,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.text,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
                 formatIntegerWithCommas(employee.actividades),
                 style: TextStyle(
-                  color: isTop3 ? rankBorder : palette.primary,
-                  fontSize: 15.5,
+                  color: isTop3 ? rankColor : palette.primary,
+                  fontSize: 15,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -5642,7 +6070,7 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
                 style: TextStyle(
                   color: palette.muted,
                   fontSize: 9.5,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],
@@ -5675,7 +6103,7 @@ class EmployeeSeguimientoRecordsList extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -5720,7 +6148,7 @@ class EmployeeSeguimientoEmptyCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -6578,7 +7006,7 @@ class EmployeeHoursEmployeeCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -6658,7 +7086,7 @@ class EmployeeHoursSummaryCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -6840,7 +7268,7 @@ class EmployeeHoursSection extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -7046,7 +7474,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -7175,7 +7603,7 @@ class EmployeeWorkdayForm extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -8282,12 +8710,16 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
               onPressed: _sharing ? null : _shareReportImage,
               elevation: 4,
               tooltip: 'Compartir estadístico',
-              backgroundColor: palette.isDark
-                  ? const Color(0xFF38BDF8)
-                  : palette.primary,
-              foregroundColor: palette.isDark
-                  ? const Color(0xFF0F172A)
-                  : Colors.white,
+              backgroundColor: palette.isGalaxy
+                  ? palette.primary
+                  : (palette.isDark
+                      ? const Color(0xFF38BDF8)
+                      : palette.primary),
+              foregroundColor: palette.isGalaxy
+                  ? Colors.white
+                  : (palette.isDark
+                      ? const Color(0xFF0F172A)
+                      : Colors.white),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
@@ -8297,9 +8729,11 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        color: palette.isDark
-                            ? const Color(0xFF0F172A)
-                            : Colors.white,
+                        color: palette.isGalaxy
+                            ? Colors.white
+                            : (palette.isDark
+                                ? const Color(0xFF0F172A)
+                                : Colors.white),
                       ),
                     )
                   : const Icon(Icons.send_rounded, size: 22),
@@ -8419,12 +8853,12 @@ class DailyRecordsStatisticsReport extends StatelessWidget {
                       width: 46,
                       height: 46,
                       decoration: BoxDecoration(
-                        color: palette.primary,
+                        color: palette.primary.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Icon(
                         Icons.analytics_rounded,
-                        color: palette.onPrimary,
+                        color: palette.primary,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -8691,9 +9125,6 @@ class DailyRecordsStatisticGroupCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: tone.withValues(alpha: palette.isDark ? 0.34 : 0.2),
-        ),
         boxShadow: [
           BoxShadow(
             color: palette.shadow.withValues(
@@ -9233,7 +9664,7 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -9438,7 +9869,7 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -9555,7 +9986,7 @@ class DailyRecordsTotalPurosCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -9818,6 +10249,8 @@ class DailyRecordsSubGroupTabs extends StatelessWidget {
           final count = groupCounts[option.key] ?? 0;
           final isLast = option == options.last;
 
+          final activeColor = palette.primary;
+
           return Padding(
             padding: EdgeInsets.only(right: isLast ? 0 : 6),
             child: ChoiceChip(
@@ -9826,20 +10259,18 @@ class DailyRecordsSubGroupTabs extends StatelessWidget {
               label: Text(
                 '${option.label} · $count',
                 style: TextStyle(
-                  color: selected
-                      ? (palette.isDark ? const Color(0xFF38BDF8) : palette.primary)
-                      : palette.muted,
+                  color: selected ? activeColor : palette.muted,
                   fontSize: 11.0,
                   fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
                 ),
               ),
-              selectedColor: palette.isDark
-                  ? const Color(0xFF38BDF8).withValues(alpha: 0.16)
-                  : palette.primary.withValues(alpha: 0.10),
+              selectedColor: activeColor.withValues(
+                alpha: palette.isDark ? 0.18 : 0.10,
+              ),
               backgroundColor: palette.surfaceSoft.withValues(alpha: 0.6),
               side: BorderSide(
                 color: selected
-                    ? (palette.isDark ? const Color(0xFF38BDF8) : palette.primary)
+                    ? activeColor
                     : palette.border.withValues(alpha: 0.6),
               ),
               showCheckmark: false,
@@ -10077,7 +10508,7 @@ class DailyRecordsEmployeeDetailHeader extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -10159,7 +10590,7 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -10264,7 +10695,7 @@ class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -10370,7 +10801,7 @@ class DailyEmployeeRecordDetailTile extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 10),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(18),
-          side: BorderSide(color: palette.border),
+          side: BorderSide.none,
         ),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -10637,7 +11068,7 @@ class DailyRecordsListCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -11730,7 +12161,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
           color: palette.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(22),
-            side: BorderSide(color: palette.border),
+            side: BorderSide.none,
           ),
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -11857,7 +12288,7 @@ class SectionPlaceholderCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(24),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -11900,6 +12331,57 @@ class SectionPlaceholderCard extends StatelessWidget {
   }
 }
 
+class _SpaceGalaxyAtmosphere extends StatelessWidget {
+  const _SpaceGalaxyAtmosphere();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Color(0xFF070709),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -100,
+            right: -80,
+            child: Container(
+              width: 340,
+              height: 340,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFF4F46E5).withValues(alpha: 0.08),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: 40,
+            left: -80,
+            child: Container(
+              width: 300,
+              height: 300,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    const Color(0xFF4338CA).withValues(alpha: 0.06),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class AppScaffold extends StatelessWidget {
   const AppScaffold({
     required this.user,
@@ -11907,6 +12389,7 @@ class AppScaffold extends StatelessWidget {
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
+    this.preference,
     this.authApi,
     this.token,
     this.onUserUpdated,
@@ -11918,6 +12401,7 @@ class AppScaffold extends StatelessWidget {
   final Widget child;
   final VoidCallback onLogout;
   final bool isDarkMode;
+  final AppThemePreference? preference;
   final VoidCallback onToggleTheme;
   final AuthApi? authApi;
   final String? token;
@@ -11928,15 +12412,13 @@ class AppScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final rolesLabel = user.roles.isEmpty ? 'Sin rol' : user.roles.join(', ');
-    final barColor = palette.isDark
-        ? const Color(0xFF0F172A)
-        : const Color(0xFF111827);
+    final isDarkOrGalaxy = palette.isDark || palette.isGalaxy;
 
     return Scaffold(
-      backgroundColor: barColor,
+      backgroundColor: palette.scaffold,
       appBar: AppBar(
-        backgroundColor: palette.isDark ? appDarkPanel : Colors.white,
-        foregroundColor: palette.isDark ? Colors.white : palette.text,
+        backgroundColor: palette.scaffold,
+        foregroundColor: isDarkOrGalaxy ? Colors.white : palette.text,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         title: InkWell(
@@ -11967,7 +12449,11 @@ class AppScaffold extends StatelessWidget {
                           color: palette.primary,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: palette.isDark ? appDarkPanel : Colors.white,
+                            color: isDarkOrGalaxy
+                                ? (palette.isGalaxy
+                                    ? const Color(0xFF231E44)
+                                    : appDarkPanel)
+                                : Colors.white,
                             width: 1.5,
                           ),
                         ),
@@ -11991,7 +12477,7 @@ class AppScaffold extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: palette.isDark ? Colors.white : palette.text,
+                          color: isDarkOrGalaxy ? Colors.white : palette.text,
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
                         ),
@@ -12002,8 +12488,10 @@ class AppScaffold extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: palette.isDark
-                              ? Colors.white.withValues(alpha: 0.78)
+                          color: isDarkOrGalaxy
+                              ? (palette.isGalaxy
+                                  ? const Color(0xFFA5B4FC)
+                                  : const Color(0xFF7DD3FC))
                               : palette.muted,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
@@ -12022,6 +12510,7 @@ class AppScaffold extends StatelessWidget {
           ),
           ThemeToggleButton(
             isDarkMode: isDarkMode,
+            preference: preference,
             onPressed: onToggleTheme,
             compact: true,
           ),
@@ -12029,7 +12518,7 @@ class AppScaffold extends StatelessWidget {
             tooltip: 'Cerrar sesión',
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded, size: 22),
-            color: palette.isDark
+            color: isDarkOrGalaxy
                 ? Colors.white.withValues(alpha: 0.85)
                 : palette.text.withValues(alpha: 0.85),
           ),
@@ -12037,9 +12526,18 @@ class AppScaffold extends StatelessWidget {
         ],
       ),
       extendBody: true,
-      body: ColoredBox(
-        color: palette.scaffold,
-        child: child,
+      body: SizedBox.expand(
+        child: palette.isGalaxy
+            ? Stack(
+                children: [
+                  const Positioned.fill(child: _SpaceGalaxyAtmosphere()),
+                  Positioned.fill(child: child),
+                ],
+              )
+            : ColoredBox(
+                color: palette.scaffold,
+                child: child,
+              ),
       ),
       bottomNavigationBar: bottomNavigationBar == null
           ? null
@@ -12234,7 +12732,6 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border.all(color: palette.border),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -12344,13 +12841,21 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
             decoration: BoxDecoration(
-              color: palette.primary.withValues(alpha: 0.12),
+              color: palette.isGalaxy
+                  ? const Color(0xFF6366F1).withValues(alpha: 0.15)
+                  : (palette.isDark
+                      ? const Color(0xFF38BDF8).withValues(alpha: 0.15)
+                      : palette.primary.withValues(alpha: 0.12)),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               rolesLabel,
               style: TextStyle(
-                color: palette.primary,
+                color: palette.isGalaxy
+                    ? const Color(0xFFA5B4FC)
+                    : (palette.isDark
+                        ? const Color(0xFF7DD3FC)
+                        : palette.primary),
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),
@@ -12364,7 +12869,6 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
               decoration: BoxDecoration(
                 color: Colors.red.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
               ),
               child: Row(
                 children: [
@@ -12623,25 +13127,31 @@ class MobileHomeBottomMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final sections = _sections;
+    final isGalaxy = palette.isGalaxy;
 
-    // Azul Cian original Plasencia (#38BDF8) sin brillos
-    final barColor = palette.isDark
-        ? const Color(0xFF38BDF8)
-        : const Color(0xFF0F172A);
-    final selectedColor = palette.isDark
-        ? const Color(0xFF0F172A)
-        : Colors.white;
-    final unselectedColor = palette.isDark
-        ? const Color(0xFF0F172A).withValues(alpha: 0.50)
-        : const Color(0xFF94A3B8);
+    final barColor = isGalaxy
+        ? const Color(0xFF6366F1)
+        : (palette.isDark
+            ? const Color(0xFF38BDF8)
+            : const Color(0xFF0F172A));
+    final selectedColor = isGalaxy
+        ? const Color(0xFF0E0B1A)
+        : (palette.isDark ? const Color(0xFF0F172A) : Colors.white);
+    final unselectedColor = isGalaxy
+        ? const Color(0xFF0E0B1A).withValues(alpha: 0.50)
+        : (palette.isDark
+            ? const Color(0xFF0F172A).withValues(alpha: 0.50)
+            : const Color(0xFF94A3B8));
     const curveRadius = 22.0;
 
-    return CustomPaint(
+    final bottomNavContent = CustomPaint(
       painter: ConcaveCurvedBottomMenuPainter(
         color: barColor,
         radius: curveRadius,
         topBorderColor: Colors.transparent,
-        shadowColor: Colors.transparent,
+        shadowColor: isGalaxy
+            ? const Color(0x66000000)
+            : Colors.transparent,
       ),
       child: SafeArea(
         top: false,
@@ -12672,6 +13182,8 @@ class MobileHomeBottomMenu extends StatelessWidget {
         ),
       ),
     );
+
+    return bottomNavContent;
   }
 }
 
@@ -12756,7 +13268,7 @@ class ActionCard extends StatelessWidget {
         color: palette.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(22),
-          side: BorderSide(color: palette.border),
+          side: BorderSide.none,
         ),
         child: InkWell(
           onTap: enabled ? onTap : null,
@@ -13125,7 +13637,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
               color: palette.surface,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(24),
-                side: BorderSide(color: palette.border),
+                side: BorderSide.none,
               ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -13391,7 +13903,7 @@ class VinetaSeguimientoSummaryCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -13567,7 +14079,7 @@ class VinetaSeguimientoTimeline extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(22),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
@@ -13706,7 +14218,6 @@ class VinetaSeguimientoStepTile extends StatelessWidget {
               decoration: BoxDecoration(
                 color: palette.surfaceSoft,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: accent.withValues(alpha: 0.35)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -13966,7 +14477,7 @@ class _VinetaScannerPageState extends State<VinetaScannerPage> {
             child: Card(
               color: palette.surface,
               shape: RoundedRectangleBorder(
-                side: BorderSide(color: palette.border),
+                side: BorderSide.none,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Padding(
@@ -14134,7 +14645,7 @@ class _EmployeeScannerPageState extends State<EmployeeScannerPage> {
             child: Card(
               color: palette.surface,
               shape: RoundedRectangleBorder(
-                side: BorderSide(color: palette.border),
+                side: BorderSide.none,
                 borderRadius: BorderRadius.circular(20),
               ),
               child: Padding(
@@ -15837,7 +16348,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),
@@ -15951,7 +16462,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
@@ -16047,7 +16558,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(6),
@@ -16189,7 +16700,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -16325,7 +16836,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(10),
@@ -16558,7 +17069,6 @@ class _MultiVinetaEntryTileState extends State<_MultiVinetaEntryTile> {
       decoration: BoxDecoration(
         color: palette.surfaceSoft.withValues(alpha: palette.isDark ? 0.38 : 1),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: statusColor.withValues(alpha: 0.28)),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
@@ -17772,7 +18282,7 @@ class ProductionEntryCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -18064,7 +18574,6 @@ class ControlModeInfoCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: palette.accentSoft,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: palette.accent.withValues(alpha: 0.35)),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
@@ -18116,7 +18625,6 @@ class _CompactDailyWorkSummaryLine extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withValues(alpha: palette.isDark ? 0.14 : 0.1),
         borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -18277,7 +18785,7 @@ class ActivitiesCard extends StatelessWidget {
       color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: palette.border),
+        side: BorderSide.none,
       ),
       child: Padding(
         padding: const EdgeInsets.all(8),
