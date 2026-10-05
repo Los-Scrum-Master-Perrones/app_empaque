@@ -7,6 +7,12 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/cupertino.dart'
+    show
+        CupertinoIcons,
+        CupertinoThemeData,
+        CupertinoPageTransitionsBuilder;
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -17,11 +23,11 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 const appVersionName = '2.0.0';
-const appBuildNumber = 23;
+const appBuildNumber = 41;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://192.168.0.7:8000/api',
+  defaultValue: 'http://192.168.2.7:8081/api',
 );
 
 Uri _apiBaseUri = _normalizeApiBaseUri(apiBaseUrl);
@@ -32,10 +38,36 @@ const appIconAsset = 'assets/images/logoappempaque.png';
 const themeStorageKey = 'theme_mode';
 const serverUrlStorageKey = 'server_url';
 const serverUrl2StorageKey = 'server_url_2';
+const sucursalStorageKey = 'selected_sucursal';
 const adminServerSettingsPin = '1234';
+const defaultSucursal = 2;
 
 const secureStorage = FlutterSecureStorage();
 final appNavigatorKey = GlobalKey<NavigatorState>();
+final activeSucursalNotifier = ValueNotifier<int>(defaultSucursal);
+
+Future<int> loadActiveSucursal() async {
+  try {
+    final stored = await secureStorage.read(key: sucursalStorageKey);
+    final val = int.tryParse(stored ?? '');
+    if (val != null && val > 0) {
+      activeSucursalNotifier.value = val;
+      return val;
+    }
+  } catch (_) {}
+  activeSucursalNotifier.value = defaultSucursal;
+  return defaultSucursal;
+}
+
+Future<void> setActiveSucursal(int sucursal) async {
+  activeSucursalNotifier.value = sucursal;
+  try {
+    await secureStorage.write(
+      key: sucursalStorageKey,
+      value: sucursal.toString(),
+    );
+  } catch (_) {}
+}
 
 MobileScannerController createQrScannerController({bool autoStart = true}) {
   return MobileScannerController(
@@ -156,13 +188,19 @@ const appMuted = Color(0xFF64748B);
 enum AppThemePreference {
   dark,
   light,
-  galaxy;
+  galaxy,
+  monochrome,
+  emerald,
+  ios;
 
   AppThemePreference get next {
     return switch (this) {
       AppThemePreference.dark => AppThemePreference.light,
       AppThemePreference.light => AppThemePreference.galaxy,
-      AppThemePreference.galaxy => AppThemePreference.dark,
+      AppThemePreference.galaxy => AppThemePreference.monochrome,
+      AppThemePreference.monochrome => AppThemePreference.emerald,
+      AppThemePreference.emerald => AppThemePreference.ios,
+      AppThemePreference.ios => AppThemePreference.dark,
     };
   }
 
@@ -171,6 +209,20 @@ enum AppThemePreference {
       AppThemePreference.dark => 'dark',
       AppThemePreference.light => 'light',
       AppThemePreference.galaxy => 'galaxy',
+      AppThemePreference.monochrome => 'monochrome',
+      AppThemePreference.emerald => 'emerald',
+      AppThemePreference.ios => 'ios',
+    };
+  }
+
+  String get displayName {
+    return switch (this) {
+      AppThemePreference.dark => 'Oscuro',
+      AppThemePreference.light => 'Claro',
+      AppThemePreference.galaxy => 'Morado Galaxy',
+      AppThemePreference.monochrome => 'Escala de Grises',
+      AppThemePreference.emerald => 'Verde Elegante',
+      AppThemePreference.ios => 'iOS Blanco',
     };
   }
 
@@ -178,6 +230,9 @@ enum AppThemePreference {
     return switch (value) {
       'light' => AppThemePreference.light,
       'galaxy' || 'liquidGlass' => AppThemePreference.galaxy,
+      'monochrome' || 'grayscale' || 'slate' => AppThemePreference.monochrome,
+      'emerald' || 'green' || 'forest' => AppThemePreference.emerald,
+      'ios' || 'apple' || 'cupertino' => AppThemePreference.ios,
       _ => AppThemePreference.dark,
     };
   }
@@ -187,6 +242,9 @@ class AppPalette {
   const AppPalette({
     required this.isDark,
     this.isGalaxy = false,
+    this.isMonochrome = false,
+    this.isEmerald = false,
+    this.isIos = false,
     required this.scaffold,
     required this.surface,
     required this.surfaceSoft,
@@ -209,7 +267,11 @@ class AppPalette {
 
   final bool isDark;
   final bool isGalaxy;
+  final bool isMonochrome;
+  final bool isEmerald;
+  final bool isIos;
   bool get isGlass => isGalaxy;
+  bool get isLightVariant => isGalaxy || isEmerald || isIos;
   final Color scaffold;
   final Color surface;
   final Color surfaceSoft;
@@ -232,6 +294,8 @@ class AppPalette {
   static const light = AppPalette(
     isDark: false,
     isGalaxy: false,
+    isMonochrome: false,
+    isEmerald: false,
     scaffold: appLightBg,
     surface: Colors.white,
     surfaceSoft: Color(0xFFEFF6FF),
@@ -254,6 +318,8 @@ class AppPalette {
   static const dark = AppPalette(
     isDark: true,
     isGalaxy: false,
+    isMonochrome: false,
+    isEmerald: false,
     scaffold: appNavy,
     surface: Color(0xFF0F172A),
     surfaceSoft: Color(0xFF1E2F4F),
@@ -274,26 +340,104 @@ class AppPalette {
   );
 
   static const galaxy = AppPalette(
-    isDark: true,
+    isDark: false,
     isGalaxy: true,
-    scaffold: Color(0xFF0E0B1A),
-    surface: Color(0xFF151026),
-    surfaceSoft: Color(0xFF1D1736),
-    border: Colors.transparent,
-    text: Color(0xFFF8FAFC),
-    muted: Color(0xFFA5B4FC),
-    primary: Color(0xFF6366F1),
-    primarySoft: Color(0xFF818CF8),
+    isMonochrome: false,
+    isEmerald: false,
+    scaffold: Color(0xFFFBFBFE),
+    surface: Colors.white,
+    surfaceSoft: Color(0xFFF5F3FF),
+    border: Color(0xFFEDE9FE),
+    text: Color(0xFF1E1B4B),
+    muted: Color(0xFF6B7280),
+    primary: Color(0xFF7C3AED),
+    primarySoft: Color(0xFFEDE9FE),
     onPrimary: Colors.white,
-    accent: Color(0xFF4F46E5),
-    accentSoft: Color(0xFF1E1B4B),
-    inputFill: Color(0xFF0D0A18),
-    inputBorder: Color(0xFF2E2654),
-    errorBg: Color(0xFF2D121B),
-    errorBorder: Color(0xFF881337),
-    errorText: Color(0xFFFDA4AF),
-    shadow: Color(0x80000000),
-    glowColor: Color(0x384F46E5),
+    accent: Color(0xFF8B5CF6),
+    accentSoft: Color(0xFFF3E8FF),
+    inputFill: Color(0xFFFAFAFE),
+    inputBorder: Color(0xFFDDD6FE),
+    errorBg: Color(0xFFFFF1F2),
+    errorBorder: Color(0xFFFECDD3),
+    errorText: Color(0xFFBE123C),
+    shadow: Color(0x147C3AED),
+    glowColor: Color(0x207C3AED),
+  );
+
+  static const monochrome = AppPalette(
+    isDark: true,
+    isGalaxy: false,
+    isMonochrome: true,
+    isEmerald: false,
+    scaffold: Color(0xFF121316),
+    surface: Color(0xFF1E2024),
+    surfaceSoft: Color(0xFF2A2D33),
+    border: Color(0xFF373A42),
+    text: Color(0xFFF3F4F6),
+    muted: Color(0xFF9CA3AF),
+    primary: Color(0xFFE4E4E7),
+    primarySoft: Color(0xFF2E3138),
+    onPrimary: Color(0xFF121316),
+    accent: Color(0xFFA1A1AA),
+    accentSoft: Color(0xFF27272A),
+    inputFill: Color(0xFF181A1D),
+    inputBorder: Color(0xFF3F424A),
+    errorBg: Color(0xFF2D1619),
+    errorBorder: Color(0xFF7F1D1D),
+    errorText: Color(0xFFFCA5A5),
+    shadow: Color(0x66000000),
+    glowColor: Color(0x20A1A1AA),
+  );
+
+  static const emerald = AppPalette(
+    isDark: false,
+    isGalaxy: false,
+    isMonochrome: false,
+    isEmerald: true,
+    scaffold: Color(0xFFF6FAF7),
+    surface: Colors.white,
+    surfaceSoft: Color(0xFFECFDF5),
+    border: Color(0xFFD1FAE5),
+    text: Color(0xFF064E3B),
+    muted: Color(0xFF4B6358),
+    primary: Color(0xFF047857),
+    primarySoft: Color(0xFFD1FAE5),
+    onPrimary: Colors.white,
+    accent: Color(0xFF059669),
+    accentSoft: Color(0xFFECFDF5),
+    inputFill: Color(0xFFF6FAF7),
+    inputBorder: Color(0xFFA7F3D0),
+    errorBg: Color(0xFFFFF1F2),
+    errorBorder: Color(0xFFFECDD3),
+    errorText: Color(0xFFBE123C),
+    shadow: Color(0x18047857),
+    glowColor: Color(0x22047857),
+  );
+
+  static const ios = AppPalette(
+    isDark: false,
+    isGalaxy: false,
+    isMonochrome: false,
+    isEmerald: false,
+    isIos: true,
+    scaffold: Color(0xFFF2F2F7),
+    surface: Colors.white,
+    surfaceSoft: Color(0xFFE5E5EA),
+    border: Color(0xFFE5E5EA),
+    text: Color(0xFF1C1C1E),
+    muted: Color(0xFF8E8E93),
+    primary: Color(0xFF007AFF),
+    primarySoft: Color(0xFFE5F0FF),
+    onPrimary: Colors.white,
+    accent: Color(0xFF007AFF),
+    accentSoft: Color(0xFFE5F0FF),
+    inputFill: Colors.white,
+    inputBorder: Color(0xFFD1D1D6),
+    errorBg: Color(0xFFFFECEB),
+    errorBorder: Color(0xFFFFB3B0),
+    errorText: Color(0xFFFF3B30),
+    shadow: Color(0x0C000000),
+    glowColor: Color(0x1F007AFF),
   );
 
   static const liquidGlass = galaxy;
@@ -304,6 +448,7 @@ class AppThemeScope extends InheritedWidget {
     required this.preference,
     required this.palette,
     required this.toggleTheme,
+    this.setTheme,
     required super.child,
     super.key,
   });
@@ -311,6 +456,7 @@ class AppThemeScope extends InheritedWidget {
   final AppThemePreference preference;
   final AppPalette palette;
   final VoidCallback toggleTheme;
+  final ValueChanged<AppThemePreference>? setTheme;
 
   static AppThemeScope of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppThemeScope>();
@@ -324,7 +470,9 @@ class AppThemeScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(covariant AppThemeScope oldWidget) {
-    return oldWidget.preference != preference || oldWidget.palette != palette;
+    return oldWidget.preference != preference ||
+        oldWidget.palette != palette ||
+        oldWidget.setTheme != setTheme;
   }
 }
 
@@ -577,31 +725,32 @@ ThemeData appTheme(Brightness brightness) {
   );
 }
 
-ThemeData appGalaxyTheme() {
-  const palette = AppPalette.galaxy;
+ThemeData appVariantTheme(AppPalette palette) {
+  final brightness = palette.isDark ? Brightness.dark : Brightness.light;
 
   return ThemeData(
     useMaterial3: true,
-    brightness: Brightness.dark,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: palette.primary,
-      brightness: Brightness.dark,
-    ).copyWith(
-      primary: palette.primary,
-      onPrimary: palette.onPrimary,
-      surface: palette.surface,
-      onSurface: palette.text,
-      error: palette.errorText,
-    ),
+    brightness: brightness,
+    colorScheme:
+        ColorScheme.fromSeed(
+          seedColor: palette.primary,
+          brightness: brightness,
+        ).copyWith(
+          primary: palette.primary,
+          onPrimary: palette.onPrimary,
+          surface: palette.surface,
+          onSurface: palette.text,
+          error: palette.errorText,
+        ),
     scaffoldBackgroundColor: palette.scaffold,
     appBarTheme: AppBarTheme(
       backgroundColor: palette.scaffold,
-      foregroundColor: Colors.white,
+      foregroundColor: palette.text,
       elevation: 0,
       surfaceTintColor: Colors.transparent,
       centerTitle: false,
       titleTextStyle: TextStyle(
-        color: Colors.white,
+        color: palette.text,
         fontSize: 18,
         fontWeight: FontWeight.w900,
       ),
@@ -652,7 +801,7 @@ ThemeData appGalaxyTheme() {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: palette.text,
+        foregroundColor: palette.primary,
         side: BorderSide(color: palette.inputBorder),
         minimumSize: const Size.fromHeight(48),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -662,14 +811,155 @@ ThemeData appGalaxyTheme() {
     dividerColor: palette.border,
     iconTheme: IconThemeData(color: palette.text),
     textTheme: ThemeData(
-      brightness: Brightness.dark,
+      brightness: brightness,
     ).textTheme.apply(bodyColor: palette.text, displayColor: palette.text),
   );
+}
+
+ThemeData appGalaxyTheme() => appVariantTheme(AppPalette.galaxy);
+ThemeData appMonochromeTheme() => appVariantTheme(AppPalette.monochrome);
+ThemeData appEmeraldTheme() => appVariantTheme(AppPalette.emerald);
+
+ThemeData appIosTheme() {
+  final palette = AppPalette.ios;
+  const brightness = Brightness.light;
+
+  return ThemeData(
+    useMaterial3: true,
+    brightness: brightness,
+    cupertinoOverrideTheme: const CupertinoThemeData(
+      brightness: Brightness.light,
+      primaryColor: Color(0xFF007AFF),
+      scaffoldBackgroundColor: Color(0xFFF2F2F7),
+      barBackgroundColor: Color(0xFFFFFFFF),
+    ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+      },
+    ),
+    splashFactory: NoSplash.splashFactory,
+    highlightColor: const Color(0x0D007AFF),
+    colorScheme:
+        ColorScheme.fromSeed(
+          seedColor: palette.primary,
+          brightness: brightness,
+        ).copyWith(
+          primary: palette.primary,
+          onPrimary: palette.onPrimary,
+          surface: palette.surface,
+          onSurface: palette.text,
+          error: palette.errorText,
+        ),
+    scaffoldBackgroundColor: palette.scaffold,
+    appBarTheme: AppBarTheme(
+      backgroundColor: palette.scaffold,
+      foregroundColor: palette.text,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      centerTitle: true,
+      titleTextStyle: TextStyle(
+        color: palette.text,
+        fontSize: 17,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.4,
+      ),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: palette.inputFill,
+      hintStyle: TextStyle(color: palette.muted, fontSize: 15),
+      labelStyle: TextStyle(color: palette.muted, fontSize: 15),
+      prefixIconColor: palette.primary,
+      suffixIconColor: palette.primary,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: palette.inputBorder, width: 0.8),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: palette.accent, width: 1.5),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: palette.errorBorder),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: palette.errorText, width: 1.5),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: palette.primary,
+        foregroundColor: palette.onPrimary,
+        disabledBackgroundColor: palette.primary.withValues(alpha: 0.40),
+        disabledForegroundColor: palette.onPrimary.withValues(alpha: 0.60),
+        minimumSize: const Size(64, 50),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        elevation: 0,
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 16,
+          letterSpacing: -0.3,
+        ),
+      ),
+    ),
+    cardTheme: CardThemeData(
+      color: palette.surface,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: palette.border, width: 0.8),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: palette.primary,
+        side: BorderSide(color: palette.inputBorder),
+        minimumSize: const Size.fromHeight(48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    ),
+    cardColor: palette.surface,
+    dividerColor: palette.border,
+    iconTheme: IconThemeData(color: palette.text),
+    textTheme: ThemeData(
+      brightness: brightness,
+    ).textTheme.apply(bodyColor: palette.text, displayColor: palette.text),
+  );
+}
+
+class _IosScrollBehavior extends ScrollBehavior {
+  const _IosScrollBehavior();
+
+  @override
+  ScrollPhysics getScrollPhysics(BuildContext context) {
+    return const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics());
+  }
+
+  @override
+  Widget buildOverscrollIndicator(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) {
+    return child;
+  }
 }
 
 final appLightTheme = appTheme(Brightness.light);
 final appDarkTheme = appTheme(Brightness.dark);
 final appGalaxyThemeData = appGalaxyTheme();
+final appMonochromeThemeData = appMonochromeTheme();
+final appEmeraldThemeData = appEmeraldTheme();
+final appIosThemeData = appIosTheme();
 final appLiquidGlassThemeData = appGalaxyThemeData;
 ThemeData appLiquidGlassTheme() => appGalaxyTheme();
 
@@ -720,6 +1010,7 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     );
     final storedTheme = await secureStorage.read(key: themeStorageKey);
     final storedServerUrl = await secureStorage.read(key: serverUrlStorageKey);
+    await loadActiveSucursal();
     final preference = AppThemePreference.fromStorage(storedTheme);
     final token = await secureStorage.read(key: 'auth_token');
 
@@ -788,6 +1079,16 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
     });
 
     unawaited(_persistTheme(nextPref));
+  }
+
+  void _setTheme(AppThemePreference preference) {
+    if (_themePreference == preference) return;
+
+    setState(() {
+      _themePreference = preference;
+    });
+
+    unawaited(_persistTheme(preference));
   }
 
   Future<void> _persistTheme(AppThemePreference preference) async {
@@ -878,22 +1179,32 @@ class _EmpaqueAppState extends State<EmpaqueApp> {
       AppThemePreference.dark => AppPalette.dark,
       AppThemePreference.light => AppPalette.light,
       AppThemePreference.galaxy => AppPalette.galaxy,
+      AppThemePreference.monochrome => AppPalette.monochrome,
+      AppThemePreference.emerald => AppPalette.emerald,
+      AppThemePreference.ios => AppPalette.ios,
     };
     final currentTheme = switch (_themePreference) {
       AppThemePreference.dark => appDarkTheme,
       AppThemePreference.light => appLightTheme,
       AppThemePreference.galaxy => appGalaxyThemeData,
+      AppThemePreference.monochrome => appMonochromeThemeData,
+      AppThemePreference.emerald => appEmeraldThemeData,
+      AppThemePreference.ios => appIosThemeData,
     };
 
     return AppThemeScope(
       preference: _themePreference,
       palette: currentPalette,
       toggleTheme: _toggleTheme,
+      setTheme: _setTheme,
       child: MaterialApp(
         navigatorKey: appNavigatorKey,
         debugShowCheckedModeBanner: false,
         title: 'Empaque QR',
         theme: currentTheme,
+        scrollBehavior: _themePreference == AppThemePreference.ios
+            ? const _IosScrollBehavior()
+            : null,
         themeAnimationDuration: const Duration(milliseconds: 180),
         themeAnimationCurve: Curves.easeOutCubic,
         home: _initializing
@@ -1000,19 +1311,21 @@ class _SplashPageState extends State<SplashPage>
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: palette.isGalaxy
-                ? const [
-                    Color(0xFF0E0B1A),
-                    Color(0xFF151026),
-                    Color(0xFF0E0B1A),
+            colors: palette.isLightVariant
+                ? [
+                    Colors.white,
+                    palette.surfaceSoft,
+                    palette.primarySoft,
                   ]
-                : (palette.isDark
-                    ? const [appNavy, Color(0xFF0F172A), appNavySoft]
-                    : const [
-                        Colors.white,
-                        Color(0xFFF8FAFC),
-                        Color(0xFFEFF6FF),
-                      ]),
+                : (palette.isMonochrome
+                      ? const [Color(0xFF101114), Color(0xFF16181C), Color(0xFF1F2228)]
+                      : (palette.isDark
+                            ? const [appNavy, Color(0xFF0F172A), appNavySoft]
+                            : const [
+                                Colors.white,
+                                Color(0xFFF8FAFC),
+                                Color(0xFFEFF6FF),
+                              ])),
             stops: const [0, 0.56, 1],
           ),
         ),
@@ -1023,11 +1336,13 @@ class _SplashPageState extends State<SplashPage>
               right: -70,
               child: LoginGlow(
                 size: 260,
-                color: palette.isGalaxy
-                    ? const Color(0x356366F1)
-                    : (palette.isDark
-                        ? const Color(0x2938BDF8)
-                        : const Color(0x2438BDF8)),
+                color: palette.isLightVariant
+                    ? palette.accent.withValues(alpha: 0.20)
+                    : (palette.isMonochrome
+                          ? const Color(0x18FFFFFF)
+                          : (palette.isDark
+                                ? const Color(0x2938BDF8)
+                                : const Color(0x2438BDF8))),
               ),
             ),
             Positioned(
@@ -1035,11 +1350,13 @@ class _SplashPageState extends State<SplashPage>
               bottom: -70,
               child: LoginGlow(
                 size: 300,
-                color: palette.isGalaxy
-                    ? const Color(0x284F46E5)
-                    : (palette.isDark
-                        ? const Color(0x222563EB)
-                        : const Color(0x162563EB)),
+                color: palette.isLightVariant
+                    ? palette.primary.withValues(alpha: 0.16)
+                    : (palette.isMonochrome
+                          ? const Color(0x14A1A1AA)
+                          : (palette.isDark
+                                ? const Color(0x222563EB)
+                                : const Color(0x162563EB))),
               ),
             ),
             Center(
@@ -1061,11 +1378,13 @@ class _SplashPageState extends State<SplashPage>
                               child: CustomPaint(
                                 foregroundPainter: SplashFramePainter(
                                   progress: _frameProgress.value,
-                                  color: palette.isGalaxy
+                                  color: palette.isLightVariant
                                       ? palette.primary
-                                      : (palette.isDark
-                                          ? appSkyLight
-                                          : palette.primary),
+                                      : (palette.isMonochrome
+                                            ? const Color(0xFFE4E4E7)
+                                            : (palette.isDark
+                                                  ? appSkyLight
+                                                  : palette.primary)),
                                 ),
                                 child: Padding(
                                   padding: const EdgeInsets.all(28),
@@ -1119,14 +1438,14 @@ class _SplashPageState extends State<SplashPage>
                             borderRadius: BorderRadius.circular(999),
                             child: LinearProgressIndicator(
                               minHeight: 3,
-                              color: palette.isGalaxy
+                              color: palette.isLightVariant
                                   ? palette.primary
                                   : palette.accent,
-                              backgroundColor: palette.isGalaxy
-                                  ? const Color(0xFF241C40)
+                              backgroundColor: palette.isLightVariant
+                                  ? palette.primarySoft
                                   : (palette.isDark
-                                      ? const Color(0xFF1E293B)
-                                      : const Color(0xFFE2E8F0)),
+                                        ? const Color(0xFF1E293B)
+                                        : const Color(0xFFE2E8F0)),
                             ),
                           ),
                         ),
@@ -1332,175 +1651,176 @@ class _LoginPageState extends State<LoginPage> {
                             borderRadius: BorderRadius.circular(28),
                             child: DecoratedBox(
                               decoration: BoxDecoration(
-                                color: palette.isGalaxy
-                                    ? const Color(0xFF0F0E17)
+                                color: palette.isLightVariant
+                                    ? Colors.white
                                     : palette.surface.withValues(alpha: 0.98),
                                 borderRadius: BorderRadius.circular(28),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: palette.isGalaxy
-                                        ? const Color(0x384F46E5)
+                                    color: palette.isLightVariant
+                                        ? palette.shadow
                                         : const Color(0x42111C33),
-                                    blurRadius: palette.isGalaxy ? 32 : 50,
+                                    blurRadius: palette.isLightVariant ? 32 : 50,
                                     offset: const Offset(0, 20),
                                   ),
                                 ],
                               ),
-                                child: Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    22,
-                                    22,
-                                    22,
-                                    18,
-                                  ),
-                                  child: AutofillGroup(
-                                    child: Form(
-                                      key: _formKey,
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          const LoginBrandHeader(),
-                                          const SizedBox(height: 24),
-                                          const LoginFieldLabel(
-                                            'Correo electronico',
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  22,
+                                  22,
+                                  22,
+                                  18,
+                                ),
+                                child: AutofillGroup(
+                                  child: Form(
+                                    key: _formKey,
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        const LoginBrandHeader(),
+                                        const SizedBox(height: 24),
+                                        const LoginFieldLabel(
+                                          'Correo electronico',
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _emailController,
+                                          keyboardType:
+                                              TextInputType.emailAddress,
+                                          autofillHints: const [
+                                            AutofillHints.email,
+                                          ],
+                                          textInputAction: TextInputAction.next,
+                                          decoration: _inputDecoration(
+                                            hintText: 'correo@ejemplo.com',
+                                            icon: Icons.alternate_email_rounded,
                                           ),
-                                          const SizedBox(height: 8),
-                                          TextFormField(
-                                            controller: _emailController,
-                                            keyboardType:
-                                                TextInputType.emailAddress,
-                                            autofillHints: const [
-                                              AutofillHints.email,
-                                            ],
-                                            textInputAction: TextInputAction.next,
-                                            decoration: _inputDecoration(
-                                              hintText: 'correo@ejemplo.com',
-                                              icon: Icons.alternate_email_rounded,
-                                            ),
-                                            validator: (value) {
-                                              if (value == null ||
-                                                  value.trim().isEmpty) {
-                                                return 'Ingresa tu correo.';
-                                              }
+                                          validator: (value) {
+                                            if (value == null ||
+                                                value.trim().isEmpty) {
+                                              return 'Ingresa tu correo.';
+                                            }
 
-                                              if (!value.contains('@')) {
-                                                return 'Ingresa un correo valido.';
-                                              }
+                                            if (!value.contains('@')) {
+                                              return 'Ingresa un correo valido.';
+                                            }
 
-                                              return null;
-                                            },
-                                          ),
-                                          const SizedBox(height: 16),
-                                          const LoginFieldLabel('Contrasena'),
-                                          const SizedBox(height: 8),
-                                          TextFormField(
-                                            controller: _passwordController,
-                                            obscureText: _obscurePassword,
-                                            autofillHints: const [
-                                              AutofillHints.password,
-                                            ],
-                                            textInputAction: TextInputAction.done,
-                                            onFieldSubmitted: (_) => _submit(),
-                                            decoration: _inputDecoration(
-                                              hintText: 'Ingresa tu contrasena',
-                                              icon: Icons.lock_outline_rounded,
-                                              suffixIcon: IconButton(
-                                                onPressed: () {
-                                                  setState(() {
-                                                    _obscurePassword =
-                                                        !_obscurePassword;
-                                                  });
-                                                },
-                                                color: palette.primary,
-                                                icon: Icon(
-                                                  _obscurePassword
-                                                      ? Icons.visibility_outlined
-                                                      : Icons
-                                                            .visibility_off_outlined,
-                                                ),
+                                            return null;
+                                          },
+                                        ),
+                                        const SizedBox(height: 16),
+                                        const LoginFieldLabel('Contrasena'),
+                                        const SizedBox(height: 8),
+                                        TextFormField(
+                                          controller: _passwordController,
+                                          obscureText: _obscurePassword,
+                                          autofillHints: const [
+                                            AutofillHints.password,
+                                          ],
+                                          textInputAction: TextInputAction.done,
+                                          onFieldSubmitted: (_) => _submit(),
+                                          decoration: _inputDecoration(
+                                            hintText: 'Ingresa tu contrasena',
+                                            icon: Icons.lock_outline_rounded,
+                                            suffixIcon: IconButton(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _obscurePassword =
+                                                      !_obscurePassword;
+                                                });
+                                              },
+                                              color: palette.primary,
+                                              icon: Icon(
+                                                _obscurePassword
+                                                    ? Icons.visibility_outlined
+                                                    : Icons
+                                                          .visibility_off_outlined,
                                               ),
                                             ),
-                                            validator: (value) {
-                                              if (value == null || value.isEmpty) {
-                                                return 'Ingresa tu contrasena.';
-                                              }
-
-                                              return null;
-                                            },
                                           ),
-                                          AnimatedSwitcher(
-                                            duration: const Duration(
-                                              milliseconds: 220,
+                                          validator: (value) {
+                                            if (value == null ||
+                                                value.isEmpty) {
+                                              return 'Ingresa tu contrasena.';
+                                            }
+
+                                            return null;
+                                          },
+                                        ),
+                                        AnimatedSwitcher(
+                                          duration: const Duration(
+                                            milliseconds: 220,
+                                          ),
+                                          child: _error == null
+                                              ? const SizedBox.shrink()
+                                              : Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                        top: 14,
+                                                      ),
+                                                  child: ErrorBox(
+                                                    message: _error!,
+                                                  ),
+                                                ),
+                                        ),
+                                        const SizedBox(height: 22),
+                                        FilledButton(
+                                          onPressed: _loading ? null : _submit,
+                                          style: FilledButton.styleFrom(
+                                            minimumSize: const Size.fromHeight(
+                                              52,
                                             ),
-                                            child: _error == null
-                                                ? const SizedBox.shrink()
-                                                : Padding(
-                                                    padding: const EdgeInsets.only(
-                                                      top: 14,
-                                                    ),
-                                                    child: ErrorBox(
-                                                      message: _error!,
+                                            backgroundColor: palette.primary,
+                                            foregroundColor: palette.onPrimary,
+                                            disabledBackgroundColor: palette
+                                                .primary
+                                                .withValues(alpha: 0.55),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(18),
+                                            ),
+                                            elevation: 0,
+                                          ),
+                                          child: AnimatedSwitcher(
+                                            duration: const Duration(
+                                              milliseconds: 180,
+                                            ),
+                                            child: _loading
+                                                ? SizedBox(
+                                                    key: ValueKey('loader'),
+                                                    width: 22,
+                                                    height: 22,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 2.5,
+                                                          color:
+                                                              palette.onPrimary,
+                                                        ),
+                                                  )
+                                                : const Text(
+                                                    'Iniciar sesion',
+                                                    key: ValueKey('text'),
+                                                    style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w800,
                                                     ),
                                                   ),
                                           ),
-                                          const SizedBox(height: 22),
-                                          FilledButton(
-                                            onPressed: _loading ? null : _submit,
-                                            style: FilledButton.styleFrom(
-                                              minimumSize: const Size.fromHeight(
-                                                52,
-                                              ),
-                                              backgroundColor: palette.primary,
-                                              foregroundColor: palette.onPrimary,
-                                              disabledBackgroundColor: palette
-                                                  .primary
-                                                  .withValues(alpha: 0.55),
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(
-                                                  18,
-                                                ),
-                                              ),
-                                              elevation: 0,
-                                            ),
-                                            child: AnimatedSwitcher(
-                                              duration: const Duration(
-                                                milliseconds: 180,
-                                              ),
-                                              child: _loading
-                                                  ? SizedBox(
-                                                      key: ValueKey('loader'),
-                                                      width: 22,
-                                                      height: 22,
-                                                      child:
-                                                          CircularProgressIndicator(
-                                                            strokeWidth: 2.5,
-                                                            color:
-                                                                palette.onPrimary,
-                                                          ),
-                                                    )
-                                                  : const Text(
-                                                      'Iniciar sesion',
-                                                      key: ValueKey('text'),
-                                                      style: TextStyle(
-                                                        fontWeight: FontWeight.w800,
-                                                      ),
-                                                    ),
-                                            ),
+                                        ),
+                                        const SizedBox(height: 18),
+                                        Text(
+                                          'Plasencia · Area de Empaque',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: palette.muted,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
                                           ),
-                                          const SizedBox(height: 18),
-                                          Text(
-                                            'Plasencia · Area de Empaque',
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              color: palette.muted,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -1510,6 +1830,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                     ),
+                  ),
                 );
               },
             ),
@@ -1734,11 +2055,25 @@ class LoginBackground extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: palette.isGalaxy
-              ? const [Color(0xFF070709), Color(0xFF0E0C16), Color(0xFF070709)]
-              : (palette.isDark
-                  ? const [Color(0xFF0B1220), Color(0xFF0F172A), appDarkPanel]
-                  : const [Colors.white, Color(0xFFF8FAFC), Color(0xFFEFF6FF)]),
+          colors: palette.isLightVariant
+              ? [
+                  Colors.white,
+                  palette.surfaceSoft,
+                  palette.surfaceSoft,
+                ]
+              : (palette.isMonochrome
+                    ? const [
+                        Color(0xFF101114),
+                        Color(0xFF16181C),
+                        Color(0xFF1F2228),
+                      ]
+                    : (palette.isDark
+                          ? const [Color(0xFF0B1220), Color(0xFF0F172A), appDarkPanel]
+                          : const [
+                              Colors.white,
+                              Color(0xFFF8FAFC),
+                              Color(0xFFEFF6FF),
+                            ])),
           stops: const [0, 0.52, 1],
         ),
       ),
@@ -1749,11 +2084,13 @@ class LoginBackground extends StatelessWidget {
             left: -80,
             child: LoginGlow(
               size: 230,
-              color: palette.isGalaxy
-                  ? const Color(0x228B5CF6)
-                  : (palette.isDark
-                      ? const Color(0x2438BDF8)
-                      : const Color(0x2038BDF8)),
+              color: palette.isLightVariant
+                ? palette.accent.withValues(alpha: 0.16)
+                : (palette.isMonochrome
+                      ? const Color(0x18FFFFFF)
+                      : (palette.isDark
+                            ? const Color(0x2438BDF8)
+                            : const Color(0x2038BDF8))),
             ),
           ),
           Positioned(
@@ -1761,11 +2098,13 @@ class LoginBackground extends StatelessWidget {
             bottom: 40,
             child: LoginGlow(
               size: 280,
-              color: palette.isGalaxy
-                  ? const Color(0x226D28D9)
-                  : (palette.isDark
-                      ? const Color(0x332563EB)
-                      : const Color(0x142563EB)),
+              color: palette.isLightVariant
+                ? palette.primary.withValues(alpha: 0.15)
+                : (palette.isMonochrome
+                      ? const Color(0x14A1A1AA)
+                      : (palette.isDark
+                            ? const Color(0x332563EB)
+                            : const Color(0x142563EB))),
             ),
           ),
           Positioned(
@@ -1773,9 +2112,13 @@ class LoginBackground extends StatelessWidget {
             bottom: 84,
             child: LoginGlow(
               size: 110,
-              color: palette.isDark
-                  ? const Color(0x1FFFFFFF)
-                  : const Color(0x1A38BDF8),
+              color: palette.isIos
+                  ? const Color(0x12007AFF)
+                  : (palette.isMonochrome
+                        ? const Color(0x14FFFFFF)
+                        : (palette.isDark
+                              ? const Color(0x1FFFFFFF)
+                              : const Color(0x1A38BDF8))),
             ),
           ),
         ],
@@ -1969,7 +2312,8 @@ class AppUpdateInfo {
     final latestName =
         (json['version_name'] as String?)?.trim() ?? currentVersionName;
     final downloadUrl = (json['download_url'] as String?)?.trim() ?? '';
-    final notes = (json['release_notes'] as String?)?.trim() ??
+    final notes =
+        (json['release_notes'] as String?)?.trim() ??
         'Nueva versión disponible.';
     final force = json['force_update'] == true;
     final published = json['published_at'] as String?;
@@ -1982,7 +2326,8 @@ class AppUpdateInfo {
       }
     });
 
-    final hasUpdate = latestCode > currentVersionCode ||
+    final hasUpdate =
+        latestCode > currentVersionCode ||
         (latestName.isNotEmpty && latestName != currentVersionName);
 
     return AppUpdateInfo(
@@ -2011,7 +2356,8 @@ Future<AppUpdateInfo?> fetchAppUpdateInfo({http.Client? client}) async {
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body);
-      final data = (decoded is Map<String, dynamic> &&
+      final data =
+          (decoded is Map<String, dynamic> &&
               decoded['data'] is Map<String, dynamic>)
           ? decoded['data'] as Map<String, dynamic>
           : (decoded is Map<String, dynamic> ? decoded : <String, dynamic>{});
@@ -2043,10 +2389,7 @@ Future<void> openDownloadUrl(BuildContext context, String url) async {
   }
 
   try {
-    final launched = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched && context.mounted) {
       showAppMessage(context, 'No se pudo abrir el navegador para descargar.');
     }
@@ -2057,9 +2400,7 @@ Future<void> openDownloadUrl(BuildContext context, String url) async {
   }
 }
 
-void showAppNotificationSheet({
-  required BuildContext context,
-}) {
+void showAppNotificationSheet({required BuildContext context}) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -2252,7 +2593,7 @@ class _AppNotificationSheetContentState
         final hasUpdate = update?.hasUpdate ?? false;
         final targetUrl = update != null
             ? (update.splitApks['arm64-v8a'] ??
-                (update.downloadUrl.isNotEmpty ? update.downloadUrl : ''))
+                  (update.downloadUrl.isNotEmpty ? update.downloadUrl : ''))
             : '';
 
         return Padding(
@@ -2276,8 +2617,8 @@ class _AppNotificationSheetContentState
                       color: hasUpdate
                           ? palette.primary.withValues(alpha: 0.15)
                           : (palette.isDark
-                              ? const Color(0xFF064E3B)
-                              : const Color(0xFFECFDF5)),
+                                ? const Color(0xFF064E3B)
+                                : const Color(0xFFECFDF5)),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(
@@ -2287,8 +2628,8 @@ class _AppNotificationSheetContentState
                       color: hasUpdate
                           ? palette.primary
                           : (palette.isDark
-                              ? const Color(0xFF34D399)
-                              : const Color(0xFF059669)),
+                                ? const Color(0xFF34D399)
+                                : const Color(0xFF059669)),
                       size: 24,
                     ),
                   ),
@@ -2457,8 +2798,10 @@ class _AppNotificationSheetContentState
               ] else ...[
                 // Estado al día
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 20,
+                  ),
                   decoration: BoxDecoration(
                     color: palette.surface,
                     borderRadius: BorderRadius.circular(18),
@@ -2506,10 +2849,7 @@ class _AppNotificationSheetContentState
 }
 
 class AppNotificationButton extends StatelessWidget {
-  const AppNotificationButton({
-    this.compact = false,
-    super.key,
-  });
+  const AppNotificationButton({this.compact = false, super.key});
 
   final bool compact;
 
@@ -2537,11 +2877,11 @@ class AppNotificationButton extends StatelessWidget {
                     : Icons.notifications_none_rounded,
                 color: hasUpdate
                     ? (palette.isDark
-                        ? const Color(0xFF38BDF8)
-                        : const Color(0xFF2563EB))
+                          ? const Color(0xFF38BDF8)
+                          : const Color(0xFF2563EB))
                     : (palette.isDark
-                        ? Colors.white.withValues(alpha: 0.85)
-                        : palette.text.withValues(alpha: 0.85)),
+                          ? Colors.white.withValues(alpha: 0.85)
+                          : palette.text.withValues(alpha: 0.85)),
                 size: compact ? 22 : 24,
               ),
             ),
@@ -2589,11 +2929,20 @@ class ThemeToggleButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final scope = AppThemeScope.maybeOf(context);
-    final currentPref = preference ??
+    final currentPref =
+        preference ??
         scope?.preference ??
-        (palette.isGalaxy
-            ? AppThemePreference.galaxy
-            : (isDarkMode ? AppThemePreference.dark : AppThemePreference.light));
+        (palette.isIos
+            ? AppThemePreference.ios
+            : (palette.isGalaxy
+                ? AppThemePreference.galaxy
+                : (palette.isMonochrome
+                      ? AppThemePreference.monochrome
+                      : (palette.isEmerald
+                            ? AppThemePreference.emerald
+                            : (isDarkMode
+                                  ? AppThemePreference.dark
+                                  : AppThemePreference.light)))));
 
     final iconSize = compact ? 22.0 : 24.0;
 
@@ -2608,7 +2957,7 @@ class ThemeToggleButton extends StatelessWidget {
           color: const Color(0xFFCBD5E1),
           size: iconSize,
         ),
-        'Tema oscuro (Luna) • Toca para cambiar a Claro',
+        'Tema Oscuro • Toca para cambiar a Claro',
       ),
       AppThemePreference.light => (
         Icon(
@@ -2616,19 +2965,27 @@ class ThemeToggleButton extends StatelessWidget {
           color: const Color(0xFF334155),
           size: iconSize,
         ),
-        'Tema claro (Sol) • Toca para cambiar a Galaxy Space',
+        'Tema Claro • Toca para cambiar a Morado Galaxy',
       ),
       AppThemePreference.galaxy => (
         _GalaxyThemeIconWidget(size: iconSize),
-        'Tema Galaxy Space (Galaxia morada) • Toca para cambiar a Oscuro',
+        'Tema Morado Galaxy • Toca para cambiar a Escala de Grises',
+      ),
+      AppThemePreference.monochrome => (
+        _MonochromeThemeIconWidget(size: iconSize),
+        'Tema Escala de Grises • Toca para cambiar a Verde Elegante',
+      ),
+      AppThemePreference.emerald => (
+        _EmeraldThemeIconWidget(size: iconSize),
+        'Tema Verde Elegante • Toca para cambiar a iOS Blanco',
+      ),
+      AppThemePreference.ios => (
+        _IosThemeIconWidget(size: iconSize),
+        'Tema iOS Blanco • Toca para cambiar a Oscuro',
       ),
     };
 
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      icon: iconWidget,
-    );
+    return IconButton(tooltip: tooltip, onPressed: onPressed, icon: iconWidget);
   }
 }
 
@@ -2641,9 +2998,7 @@ class _GalaxyThemeIconWidget extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(
-        painter: const _GalaxyThemeIconPainter(),
-      ),
+      child: CustomPaint(painter: const _GalaxyThemeIconPainter()),
     );
   }
 }
@@ -2751,6 +3106,154 @@ class _GalaxyThemeIconPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _MonochromeThemeIconWidget extends StatelessWidget {
+  const _MonochromeThemeIconWidget({this.size = 24});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: const _MonochromeThemeIconPainter()),
+    );
+  }
+}
+
+class _MonochromeThemeIconPainter extends CustomPainter {
+  const _MonochromeThemeIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final radius = size.width / 2.3;
+
+    final basePaint = Paint()
+      ..color = const Color(0xFFE5E7EB)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(cx, cy), radius, basePaint);
+
+    final darkHalfPaint = Paint()
+      ..color = const Color(0xFF1F2937)
+      ..style = PaintingStyle.fill;
+
+    final path = Path()
+      ..moveTo(cx, cy - radius)
+      ..arcToPoint(
+        Offset(cx, cy + radius),
+        radius: Radius.circular(radius),
+        clockwise: false,
+      )
+      ..close();
+    canvas.drawPath(path, darkHalfPaint);
+
+    final borderPaint = Paint()
+      ..color = const Color(0xFF4B5563)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    canvas.drawCircle(Offset(cx, cy), radius, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _EmeraldThemeIconWidget extends StatelessWidget {
+  const _EmeraldThemeIconWidget({this.size = 24});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: const _EmeraldThemeIconPainter()),
+    );
+  }
+}
+
+class _EmeraldThemeIconPainter extends CustomPainter {
+  const _EmeraldThemeIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final s = size.width / 24.0;
+
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.scale(s, s);
+
+    final gemPath = Path()
+      ..moveTo(0, -9.5)
+      ..lineTo(8.5, -2.5)
+      ..lineTo(0, 9.5)
+      ..lineTo(-8.5, -2.5)
+      ..close();
+
+    final gemPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        const Offset(0, -9.5),
+        const Offset(0, 9.5),
+        [
+          const Color(0xFF34D399),
+          const Color(0xFF047857),
+          const Color(0xFF064E3B),
+        ],
+        [0.0, 0.55, 1.0],
+      );
+    canvas.drawPath(gemPath, gemPaint);
+
+    final facetPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = Colors.white.withValues(alpha: 0.65);
+    canvas.drawLine(const Offset(0, -9.5), const Offset(0, 9.5), facetPaint);
+    canvas.drawLine(const Offset(-8.5, -2.5), const Offset(8.5, -2.5), facetPaint);
+
+    final sparklePaint = Paint()..color = Colors.white;
+    canvas.drawCircle(const Offset(3.0, -4.5), 1.1, sparklePaint);
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _IosThemeIconWidget extends StatelessWidget {
+  const _IosThemeIconWidget({this.size = 24});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFF007AFF),
+        borderRadius: BorderRadius.circular(size * 0.28),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF007AFF).withValues(alpha: 0.35),
+            blurRadius: 4,
+            offset: const Offset(0, 1.5),
+          ),
+        ],
+      ),
+      child: Center(
+        child: Icon(
+          Icons.apple,
+          color: Colors.white,
+          size: size * 0.72,
+        ),
+      ),
+    );
+  }
 }
 
 class HomePage extends StatelessWidget {
@@ -3047,8 +3550,10 @@ class AdminMainHomeSection extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              VinetaSeguimientoPage(authApi: authApi, token: token),
+                          builder: (_) => VinetaSeguimientoPage(
+                            authApi: authApi,
+                            token: token,
+                          ),
                         ),
                       );
                     },
@@ -3061,8 +3566,10 @@ class AdminMainHomeSection extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              EmployeeSeguimientoPage(authApi: authApi, token: token),
+                          builder: (_) => EmployeeSeguimientoPage(
+                            authApi: authApi,
+                            token: token,
+                          ),
                         ),
                       );
                     },
@@ -3104,8 +3611,10 @@ class AdminMainHomeSection extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              VinetaCodeSearchPage(authApi: authApi, token: token),
+                          builder: (_) => VinetaCodeSearchPage(
+                            authApi: authApi,
+                            token: token,
+                          ),
                         ),
                       );
                     },
@@ -3118,8 +3627,10 @@ class AdminMainHomeSection extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              MultiVinetaScanPage(authApi: authApi, token: token),
+                          builder: (_) => MultiVinetaScanPage(
+                            authApi: authApi,
+                            token: token,
+                          ),
                         ),
                       );
                     },
@@ -3132,8 +3643,10 @@ class AdminMainHomeSection extends StatelessWidget {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              EmployeeHoursSearchPage(authApi: authApi, token: token),
+                          builder: (_) => EmployeeHoursSearchPage(
+                            authApi: authApi,
+                            token: token,
+                          ),
                         ),
                       );
                     },
@@ -3243,12 +3756,12 @@ class _AdminAccessCardState extends State<AdminAccessCard> {
               borderRadius: BorderRadius.circular(22),
               boxShadow: [
                 BoxShadow(
-                  color: palette.isGalaxy
-                      ? const Color(0x334F46E5)
+                  color: palette.isLightVariant
+                      ? palette.shadow.withValues(alpha: 0.20)
                       : palette.shadow.withValues(
                           alpha: palette.isDark ? 0.16 : 0.075,
                         ),
-                  blurRadius: palette.isGalaxy ? 16 : 14,
+                  blurRadius: palette.isLightVariant ? 16 : 14,
                   offset: const Offset(0, 5),
                 ),
               ],
@@ -3264,8 +3777,12 @@ class _AdminAccessCardState extends State<AdminAccessCard> {
                       width: 124,
                       height: 78,
                       angle: 0.12,
-                      color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.08 : 0.055),
-                      lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.12 : 0.075),
+                      color: tone.panel.withValues(
+                        alpha: palette.isLightVariant ? 0.08 : 0.055,
+                      ),
+                      lineColor: tone.panel.withValues(
+                        alpha: palette.isLightVariant ? 0.12 : 0.075,
+                      ),
                     ),
                   ),
                   Positioned(
@@ -3275,8 +3792,12 @@ class _AdminAccessCardState extends State<AdminAccessCard> {
                       width: 98,
                       height: 62,
                       angle: -0.10,
-                      color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.06 : 0.035),
-                      lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.09 : 0.050),
+                      color: tone.panel.withValues(
+                        alpha: palette.isLightVariant ? 0.06 : 0.035,
+                      ),
+                      lineColor: tone.panel.withValues(
+                        alpha: palette.isLightVariant ? 0.09 : 0.050,
+                      ),
                     ),
                   ),
                   Padding(
@@ -3302,18 +3823,30 @@ class _AdminAccessCardState extends State<AdminAccessCard> {
                                   ),
                                 ],
                               ),
-                              child: Icon(item.icon, color: tone.icon, size: 25),
+                              child: Icon(
+                                item.icon,
+                                color: tone.icon,
+                                size: 25,
+                              ),
                             ),
                             const Spacer(),
                             Container(
                               width: 30,
                               height: 30,
                               decoration: BoxDecoration(
-                                color: palette.isGalaxy
-                                    ? const Color(0xFF1B1736)
+                                color: palette.isLightVariant
+                                    ? palette.surfaceSoft
                                     : (palette.isDark
-                                        ? Colors.white.withValues(alpha: 0.06)
-                                        : palette.surfaceSoft.withValues(alpha: 0.70)),
+                                          ? Colors.white.withValues(alpha: 0.06)
+                                          : palette.surfaceSoft.withValues(
+                                              alpha: 0.70,
+                                            )),
+                                border: palette.isLightVariant
+                                    ? Border.all(
+                                        color: palette.border,
+                                        width: 1,
+                                      )
+                                    : null,
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Icon(
@@ -3581,8 +4114,8 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
               borderRadius: BorderRadius.circular(28),
               boxShadow: [
                 BoxShadow(
-                  color: palette.isGalaxy
-                      ? const Color(0x334F46E5)
+                  color: palette.isLightVariant
+                      ? palette.shadow.withValues(alpha: 0.20)
                       : palette.shadow.withValues(
                           alpha: palette.isDark ? 0.18 : 0.085,
                         ),
@@ -3606,8 +4139,12 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
                         height: 96,
                         angle: iconOnLeft ? -0.12 : 0.12,
                         mirror: !iconOnLeft,
-                        color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.08 : 0.055),
-                        lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.12 : 0.075),
+                        color: tone.panel.withValues(
+                          alpha: palette.isLightVariant ? 0.08 : 0.055,
+                        ),
+                        lineColor: tone.panel.withValues(
+                          alpha: palette.isLightVariant ? 0.12 : 0.075,
+                        ),
                       ),
                     ),
                     Positioned(
@@ -3619,8 +4156,12 @@ class _OperatorActionCardState extends State<OperatorActionCard> {
                         height: 80,
                         angle: iconOnLeft ? 0.10 : -0.10,
                         mirror: iconOnLeft,
-                        color: tone.panel.withValues(alpha: palette.isGalaxy ? 0.06 : 0.035),
-                        lineColor: tone.panel.withValues(alpha: palette.isGalaxy ? 0.09 : 0.052),
+                        color: tone.panel.withValues(
+                          alpha: palette.isLightVariant ? 0.06 : 0.035,
+                        ),
+                        lineColor: tone.panel.withValues(
+                          alpha: palette.isLightVariant ? 0.09 : 0.052,
+                        ),
                       ),
                     ),
                     Padding(
@@ -3786,25 +4327,47 @@ class _OperatorActionTone {
   final Color pillIcon;
 
   static _OperatorActionTone resolve(AppPalette palette, int tone) {
-    if (palette.isGalaxy) {
-      const accent = Color(0xFF6366F1);
-      const background = Color(0xFF0F0E17);
+    if (palette.isLightVariant) {
+      final accent = palette.primary;
+      const background = Colors.white;
       final backgroundAlt = Color.alphaBlend(
-        accent.withValues(alpha: tone.isEven ? 0.08 : 0.13),
-        const Color(0xFF161426),
+        accent.withValues(alpha: tone.isEven ? 0.04 : 0.07),
+        palette.scaffold,
       );
 
       return _OperatorActionTone(
         background: background,
         backgroundAlt: backgroundAlt,
         panel: accent,
-        border: const Color(0xFF2E2757),
-        title: Colors.white,
-        subtitle: const Color(0xFFA5B4FC),
-        iconBackground: const Color(0xFF1C1838),
-        iconBorder: const Color(0xFF4338CA),
+        border: palette.border,
+        title: palette.text,
+        subtitle: palette.muted,
+        iconBackground: palette.surfaceSoft,
+        iconBorder: palette.border,
         icon: accent,
-        pillIcon: const Color(0xFF818CF8),
+        pillIcon: palette.primary,
+      );
+    }
+
+    if (palette.isMonochrome) {
+      final accent = palette.primary;
+      final background = palette.surface;
+      final backgroundAlt = Color.alphaBlend(
+        Colors.white.withValues(alpha: tone.isEven ? 0.04 : 0.07),
+        palette.surface,
+      );
+
+      return _OperatorActionTone(
+        background: background,
+        backgroundAlt: backgroundAlt,
+        panel: const Color(0xFF71717A),
+        border: palette.border,
+        title: palette.text,
+        subtitle: palette.muted,
+        iconBackground: palette.surfaceSoft,
+        iconBorder: palette.border,
+        icon: accent,
+        pillIcon: palette.primary,
       );
     }
 
@@ -3987,28 +4550,39 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   final _searchController = TextEditingController();
   final _jornadaHoursController = TextEditingController();
   final _jornadaMinutesController = TextEditingController();
+  final _jornadaObservationController = TextEditingController();
   DateTime _date = DateTime.now();
-  String _groupKey = 'rezago';
+  String _groupKey = '';
   String _search = '';
   int? _expandedEmployeeId;
   bool _loading = true;
   bool _savingJornada = false;
   String? _error;
   EmployeeHoursOverviewResult? _result;
+  int _globalActionTab = 0;
 
   @override
   void initState() {
     super.initState();
+    activeSucursalNotifier.addListener(_onSucursalChanged);
     _load();
   }
 
   @override
   void dispose() {
+    activeSucursalNotifier.removeListener(_onSucursalChanged);
     _searchController.dispose();
     _jornadaHoursController.dispose();
     _jornadaMinutesController.dispose();
+    _jornadaObservationController.dispose();
     super.dispose();
   }
+
+  void _onSucursalChanged() {
+    if (!mounted) return;
+    unawaited(_load());
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -4019,12 +4593,21 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       final result = await widget.authApi.employeeHoursOverview(
         widget.token,
         date: _date,
+        sucursal: activeSucursalNotifier.value,
       );
 
       if (!mounted) return;
 
       setState(() {
         _result = result;
+
+        if (result.documentos.isNotEmpty) {
+          if (_groupKey.isEmpty || !result.documentos.any((d) => d.key == _groupKey)) {
+            _groupKey = result.documentos.first.key;
+          }
+        } else {
+          _groupKey = 'sin_documento';
+        }
 
         if (_expandedEmployeeId != null &&
             !result.employees.any(
@@ -4080,14 +4663,21 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   void _clearJornadaForm() {
     _jornadaHoursController.clear();
     _jornadaMinutesController.clear();
+    _jornadaObservationController.clear();
   }
 
-  String get _groupLabel => switch (_groupKey) {
-    'anillado' => 'Anillado',
-    'llenado' => 'Llenado',
-    'limpieza' => 'Limpieza',
-    _ => 'Rezago',
-  };
+  String get _groupLabel {
+    final result = _result;
+    if (result != null) {
+      final doc = result.documentos.where((d) => d.key == _groupKey).firstOrNull;
+      if (doc != null) {
+        return doc.label;
+      }
+    }
+    return _groupKey == 'sin_documento'
+        ? 'Sin documento'
+        : (_groupKey.isNotEmpty ? 'Doc. #$_groupKey' : 'Documento');
+  }
 
   List<EmployeeHoursOverviewItem> _groupEmployees() {
     return (_result?.employees ?? const <EmployeeHoursOverviewItem>[])
@@ -4151,6 +4741,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
           date: _date,
           group: _groupKey,
           minutes: totalMinutes,
+          sucursal: activeSucursalNotifier.value,
         );
         updatedEmployees++;
         updatedRecords += result.registrosActualizados;
@@ -4175,6 +4766,114 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       showAppMessage(
         context,
         'No se pudo distribuir la jornada en $_groupLabel.',
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _savingJornada = false;
+      });
+    }
+  }
+
+  Future<void> _saveGroupOrdinaryHour() async {
+    if (_savingJornada) {
+      return;
+    }
+
+    final hoursText = _jornadaHoursController.text.trim();
+    final minutesText = _jornadaMinutesController.text.trim();
+    final observation = _jornadaObservationController.text.trim();
+    final hours = hoursText.isEmpty ? 0 : int.tryParse(hoursText);
+    final minutePart = minutesText.isEmpty ? 0 : int.tryParse(minutesText);
+
+    if (hours == null || hours < 0) {
+      showAppMessage(context, 'Ingresa horas validas.');
+      return;
+    }
+
+    if (minutePart == null || minutePart < 0 || minutePart > 59) {
+      showAppMessage(context, 'Ingresa minutos entre 0 y 59.');
+      return;
+    }
+
+    final totalMinutes = (hours * 60) + minutePart;
+
+    if (totalMinutes <= 0 || totalMinutes > 570) {
+      showAppMessage(
+        context,
+        'Ingresa una jornada entre 1 minuto y 9 h 30 min.',
+      );
+      return;
+    }
+
+    if (observation.isEmpty) {
+      showAppMessage(context, 'Ingresa una observacion.');
+      return;
+    }
+
+    final employees = _groupEmployees();
+
+    if (employees.isEmpty) {
+      showAppMessage(
+        context,
+        'No hay empleados en $_groupLabel para la fecha seleccionada.',
+      );
+      return;
+    }
+
+    setState(() {
+      _savingJornada = true;
+    });
+
+    var updatedEmployees = 0;
+    var failedEmployees = 0;
+
+    try {
+      await widget.authApi.addGlobalOrdinaryHour(
+        widget.token,
+        date: _date,
+        group: _groupKey,
+        minutes: totalMinutes,
+        observation: observation,
+        sucursal: activeSucursalNotifier.value,
+      );
+      updatedEmployees = employees.length;
+    } catch (_) {
+      for (final item in employees) {
+        try {
+          await widget.authApi.addEmployeeOrdinaryHour(
+            widget.token,
+            employeeId: item.employee.id,
+            date: _date,
+            minutes: totalMinutes,
+            observation: observation,
+            sucursal: activeSucursalNotifier.value,
+          );
+          updatedEmployees++;
+        } catch (_) {
+          failedEmployees++;
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    if (updatedEmployees > 0) {
+      _clearJornadaForm();
+      showAppMessage(
+        context,
+        failedEmployees == 0
+            ? 'Jornada laboral agregada a $updatedEmployees empleados de $_groupLabel.'
+            : 'Jornada laboral agregada a $updatedEmployees empleados; $failedEmployees no pudieron actualizarse.',
+        isError: failedEmployees > 0,
+      );
+      await _load();
+    } else {
+      showAppMessage(
+        context,
+        'No se pudo agregar la jornada laboral en $_groupLabel.',
+        isError: true,
       );
     }
 
@@ -4283,6 +4982,9 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                 controller: _searchController,
                 groupKey: _groupKey,
                 groupCounts: result?.groupCounts ?? const <String, int>{},
+                options: (result != null && result.documentos.isNotEmpty)
+                    ? result.documentos
+                    : const [DailyRecordsActivityGroupOption(key: 'sin_documento', label: 'Sin documento')],
                 onGroupChanged: (value) {
                   setState(() {
                     _groupKey = value;
@@ -4300,15 +5002,51 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
               ),
               if (!_loading && _error == null && groupEmployees.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                EmployeeWorkdayForm(
-                  enabled: !_savingJornada,
-                  hoursController: _jornadaHoursController,
-                  minutesController: _jornadaMinutesController,
-                  saving: _savingJornada,
-                  description:
-                      'Se aplicara a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)}.',
-                  onSubmit: _saveGroupWorkday,
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment<int>(
+                      value: 0,
+                      icon: Icon(Icons.share_rounded, size: 18),
+                      label: Text('Distribuir jornada'),
+                    ),
+                    ButtonSegment<int>(
+                      value: 1,
+                      icon: Icon(Icons.more_time_rounded, size: 18),
+                      label: Text('Horas ordinarias'),
+                    ),
+                  ],
+                  selected: {_globalActionTab},
+                  onSelectionChanged: (set) {
+                    setState(() {
+                      _globalActionTab = set.first;
+                    });
+                  },
                 ),
+                const SizedBox(height: 8),
+                if (_globalActionTab == 0) ...[
+                  EmployeeWorkdayForm(
+                    enabled: !_savingJornada,
+                    hoursController: _jornadaHoursController,
+                    minutesController: _jornadaMinutesController,
+                    saving: _savingJornada,
+                    description:
+                        'Se aplicará a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)} entre sus viñetas.',
+                    onSubmit: _saveGroupWorkday,
+                  ),
+                ] else ...[
+                  EmployeeOrdinaryHourForm(
+                    enabled: !_savingJornada,
+                    hoursController: _jornadaHoursController,
+                    minutesController: _jornadaMinutesController,
+                    observationController: _jornadaObservationController,
+                    saving: _savingJornada,
+                    title: 'Agregar horas ordinarias global',
+                    description:
+                        'Se agregará a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)}.',
+                    submitLabel: 'Agregar horas ordinarias a todos',
+                    onSubmit: _saveGroupOrdinaryHour,
+                  ),
+                ],
               ],
               if (_loading) ...[
                 const SizedBox(height: 24),
@@ -4383,6 +5121,7 @@ class EmployeeHoursFiltersCard extends StatelessWidget {
     required this.controller,
     required this.groupKey,
     required this.groupCounts,
+    this.options = employeeHoursActivityGroups,
     required this.onGroupChanged,
     required this.onSearchChanged,
     required this.onScanEmployee,
@@ -4392,6 +5131,7 @@ class EmployeeHoursFiltersCard extends StatelessWidget {
   final TextEditingController controller;
   final String groupKey;
   final Map<String, int> groupCounts;
+  final List<DailyRecordsActivityGroupOption> options;
   final ValueChanged<String> onGroupChanged;
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onScanEmployee;
@@ -4415,6 +5155,7 @@ class EmployeeHoursFiltersCard extends StatelessWidget {
             DailyRecordsActivityGroupTabs(
               selectedKey: groupKey,
               groupCounts: groupCounts,
+              options: options,
               onChanged: onGroupChanged,
             ),
             const SizedBox(height: 10),
@@ -5113,8 +5854,18 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final monthNames = [
-      'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-      'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+      'Ene',
+      'Feb',
+      'Mar',
+      'Abr',
+      'May',
+      'Jun',
+      'Jul',
+      'Ago',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dic',
     ];
 
     return Dialog(
@@ -5186,13 +5937,17 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
               itemBuilder: (context, index) {
                 final month = index + 1;
                 final isSelected =
-                    month == _selectedMonth && _selectedYear == widget.initialDate.year;
+                    month == _selectedMonth &&
+                    _selectedYear == widget.initialDate.year;
                 final isCurrentCalendar =
-                    month == DateTime.now().month && _selectedYear == DateTime.now().year;
+                    month == DateTime.now().month &&
+                    _selectedYear == DateTime.now().year;
 
                 return InkWell(
                   onTap: () {
-                    Navigator.of(context).pop(DateTime(_selectedYear, month, 1));
+                    Navigator.of(
+                      context,
+                    ).pop(DateTime(_selectedYear, month, 1));
                   },
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
@@ -5201,13 +5956,15 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
                       color: isSelected
                           ? palette.primary
                           : (isCurrentCalendar
-                              ? palette.primary.withValues(alpha: 0.12)
-                              : palette.surfaceSoft),
+                                ? palette.primary.withValues(alpha: 0.12)
+                                : palette.surfaceSoft),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: isSelected
                             ? palette.primary
-                            : (isCurrentCalendar ? palette.primary : palette.border),
+                            : (isCurrentCalendar
+                                  ? palette.primary
+                                  : palette.border),
                       ),
                     ),
                     child: Text(
@@ -5215,7 +5972,9 @@ class _MonthPickerDialogState extends State<_MonthPickerDialog> {
                       style: TextStyle(
                         color: isSelected
                             ? palette.onPrimary
-                            : (isCurrentCalendar ? palette.primary : palette.text),
+                            : (isCurrentCalendar
+                                  ? palette.primary
+                                  : palette.text),
                         fontSize: 13,
                         fontWeight: isSelected || isCurrentCalendar
                             ? FontWeight.w900
@@ -5257,76 +6016,83 @@ class EmployeeSeguimientoScopeTabs extends StatelessWidget {
         border: Border.all(color: palette.border),
       ),
       child: Row(
-        children: EmployeeSeguimientoScope.values.map((scope) {
-          final active = scope == selected;
-          final count = groupCounts[scope.key] ?? 0;
+        children: EmployeeSeguimientoScope.values
+            .map((scope) {
+              final active = scope == selected;
+              final count = groupCounts[scope.key] ?? 0;
 
-          return Expanded(
-            child: InkWell(
-              onTap: () => onChanged(scope),
-              borderRadius: BorderRadius.circular(14),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                decoration: BoxDecoration(
-                  color: active ? palette.primary : Colors.transparent,
+              return Expanded(
+                child: InkWell(
+                  onTap: () => onChanged(scope),
                   borderRadius: BorderRadius.circular(14),
-                  boxShadow: active
-                      ? [
-                          BoxShadow(
-                            color: palette.primary.withValues(alpha: 0.25),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: active ? palette.primary : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: active
+                          ? [
+                              BoxShadow(
+                                color: palette.primary.withValues(alpha: 0.25),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          scope.icon,
-                          size: 15,
-                          color: active ? palette.onPrimary : palette.muted,
-                        ),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            scope.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: active ? palette.onPrimary : palette.text,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w900,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              scope.icon,
+                              size: 15,
+                              color: active ? palette.onPrimary : palette.muted,
                             ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                scope.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: active
+                                      ? palette.onPrimary
+                                      : palette.text,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '$count emp.',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: active
+                                ? palette.onPrimary.withValues(alpha: 0.85)
+                                : palette.muted,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$count emp.',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: active
-                            ? palette.onPrimary.withValues(alpha: 0.85)
-                            : palette.muted,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-          );
-        }).toList(growable: false),
+              );
+            })
+            .toList(growable: false),
       ),
     );
   }
@@ -5460,21 +6226,14 @@ class EmployeeSeguimientoSummaryCard extends StatelessWidget {
                     highlighted: true,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Expanded(
                   child: EmployeeSeguimientoMetricChip(
                     label: 'Actividades',
                     value: formatIntegerWithCommas(summary.actividades),
                   ),
                 ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: EmployeeSeguimientoMetricChip(
-                    label: 'Cajones',
-                    value: formatIntegerWithCommas(summary.cajones),
-                  ),
-                ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Expanded(
                   child: EmployeeSeguimientoMetricChip(
                     label: 'Empleados',
@@ -5644,10 +6403,7 @@ class EmployeeSeguimientoActivityTile extends StatelessWidget {
 }
 
 class EmployeeRankingPodium extends StatelessWidget {
-  const EmployeeRankingPodium({
-    required this.topEmployees,
-    super.key,
-  });
+  const EmployeeRankingPodium({required this.topEmployees, super.key});
 
   final List<EmployeeSeguimientoEmployeeSummary> topEmployees;
 
@@ -5702,9 +6458,15 @@ class EmployeeRankingPodium extends StatelessWidget {
                         rank: 2,
                         color: palette.isGalaxy
                             ? const Color(0xFF818CF8)
-                            : (palette.isDark
-                                ? const Color(0xFF60A5FA)
-                                : palette.accent),
+                            : (palette.isMonochrome
+                                  ? const Color(0xFF9CA3AF)
+                                  : (palette.isEmerald
+                                        ? const Color(0xFF059669)
+                                        : (palette.isIos
+                                              ? const Color(0xFF5856D6)
+                                              : (palette.isDark
+                                                    ? const Color(0xFF60A5FA)
+                                                    : palette.accent)))),
                         icon: Icons.looks_two_rounded,
                         heightExtra: 20,
                       )
@@ -5731,9 +6493,15 @@ class EmployeeRankingPodium extends StatelessWidget {
                         rank: 3,
                         color: palette.isGalaxy
                             ? const Color(0xFFA5B4FC)
-                            : (palette.isDark
-                                ? const Color(0xFF94A3B8)
-                                : const Color(0xFF64748B)),
+                            : (palette.isMonochrome
+                                  ? const Color(0xFF6B7280)
+                                  : (palette.isEmerald
+                                        ? const Color(0xFF34D399)
+                                        : (palette.isIos
+                                              ? const Color(0xFF34C759)
+                                              : (palette.isDark
+                                                    ? const Color(0xFF94A3B8)
+                                                    : const Color(0xFF64748B))))),
                         icon: Icons.looks_3_rounded,
                         heightExtra: 0,
                       )
@@ -5772,7 +6540,7 @@ class _PodiumColumn extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.16),
             borderRadius: BorderRadius.circular(10),
@@ -5780,13 +6548,13 @@ class _PodiumColumn extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 2),
+              Icon(icon, size: 15, color: color),
+              const SizedBox(width: 3),
               Text(
                 '#$rank',
                 style: TextStyle(
                   color: color,
-                  fontSize: 11,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -5794,32 +6562,22 @@ class _PodiumColumn extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        CircleAvatar(
-          radius: isFirst ? 24 : 20,
-          backgroundColor: color.withValues(alpha: 0.25),
-          child: CircleAvatar(
-            radius: isFirst ? 21 : 17,
-            backgroundColor: isFirst ? palette.primary : palette.surfaceSoft,
-            foregroundColor: isFirst ? palette.onPrimary : palette.text,
-            child: Text(
-              employee.initial,
-              style: TextStyle(
-                fontWeight: FontWeight.w900,
-                fontSize: isFirst ? 14 : 12,
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Text(
+                employee.nombre,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: palette.text,
+                  fontSize: isFirst ? 11.5 : 10.5,
+                  fontWeight: FontWeight.w800,
+                  height: 1.18,
+                ),
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          employee.nombre,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: palette.text,
-            fontSize: isFirst ? 12 : 11,
-            fontWeight: FontWeight.w800,
           ),
         ),
         const SizedBox(height: 6),
@@ -5890,8 +6648,9 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
       );
     }
 
-    final topPodium =
-        employees.length >= 2 ? employees.take(3).toList(growable: false) : null;
+    final topPodium = employees.length >= 2
+        ? employees.take(3).toList(growable: false)
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -5924,8 +6683,10 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
                       ),
                     ),
                     Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: palette.primary.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(10),
@@ -5971,22 +6732,20 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
     final palette = appPalette(context);
 
     final (c1, c2, c3) = palette.isGalaxy
-        ? (
-            palette.primary,
-            const Color(0xFF818CF8),
-            const Color(0xFFA5B4FC),
-          )
-        : (palette.isDark
-            ? (
-                palette.primary,
-                const Color(0xFF60A5FA),
-                const Color(0xFF94A3B8),
-              )
-            : (
-                palette.primary,
-                palette.accent,
-                const Color(0xFF64748B),
-              ));
+        ? (palette.primary, const Color(0xFF818CF8), const Color(0xFFA5B4FC))
+        : (palette.isMonochrome
+              ? (palette.primary, const Color(0xFF9CA3AF), const Color(0xFF6B7280))
+              : (palette.isEmerald
+                    ? (palette.primary, const Color(0xFF059669), const Color(0xFF34D399))
+                    : (palette.isIos
+                          ? (palette.primary, const Color(0xFF5856D6), const Color(0xFF34C759))
+                          : (palette.isDark
+                                ? (
+                                    palette.primary,
+                                    const Color(0xFF60A5FA),
+                                    const Color(0xFF94A3B8),
+                                  )
+                                : (palette.primary, palette.accent, const Color(0xFF64748B))))));
 
     final (rankColor, rankIcon) = switch (rank) {
       1 => (c1, Icons.looks_one_rounded),
@@ -6028,27 +6787,14 @@ class EmployeeSeguimientoEmployeeTile extends StatelessWidget {
                   ),
           ),
           const SizedBox(width: 12),
-          CircleAvatar(
-            radius: 17,
-            backgroundColor: isTop3
-                ? rankColor.withValues(alpha: 0.22)
-                : palette.surface,
-            foregroundColor: isTop3 ? rankColor : palette.text,
-            child: Text(
-              employee.initial,
-              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
-            ),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Text(
               employee.nombre,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: palette.text,
                 fontSize: 13.5,
                 fontWeight: FontWeight.w800,
+                height: 1.2,
               ),
             ),
           ),
@@ -6274,7 +7020,11 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
     final minutes = int.tryParse(_workdayMinutesController.text.trim()) ?? 0;
     final totalMinutes = (hours * 60) + minutes;
 
-    if (hours < 0 || minutes < 0 || minutes > 59 || totalMinutes <= 0 || totalMinutes > 570) {
+    if (hours < 0 ||
+        minutes < 0 ||
+        minutes > 59 ||
+        totalMinutes <= 0 ||
+        totalMinutes > 570) {
       _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30 min.');
       return;
     }
@@ -6290,13 +7040,17 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         date: _date,
         group: widget.group,
         minutes: totalMinutes,
+        sucursal: activeSucursalNotifier.value,
       );
 
       if (!mounted) return;
 
       _workdayHoursController.clear();
       _workdayMinutesController.clear();
-      _showMessage('Jornada laboral distribuida correctamente.', isError: false);
+      _showMessage(
+        'Jornada laboral distribuida correctamente.',
+        isError: false,
+      );
       await _load();
       await widget.onChanged?.call();
     } on ApiException catch (error) {
@@ -6313,6 +7067,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
       }
     }
   }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -6325,6 +7080,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         employeeId: widget.employee.id,
         date: _date,
         group: widget.group,
+        sucursal: activeSucursalNotifier.value,
       );
 
       if (!mounted) return;
@@ -6419,6 +7175,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
           date: _date,
           minutes: totalMinutes,
           observation: observation,
+          sucursal: activeSucursalNotifier.value,
         );
       } else {
         await widget.authApi.updateEmployeeOrdinaryHour(
@@ -6926,7 +7683,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
                     await _openOrdinaryHourActions(item);
                     return false;
                   },
-                  background: EmployeeHoursSwipeActionsBackground(
+                  background: const EmployeeHoursSwipeActionsBackground(
                     label: 'Editar o eliminar',
                   ),
                   child: EmployeeHoursEntryTile(
@@ -6949,6 +7706,13 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
           observationController: _observationController,
           saving: _saving,
           editing: _editingHour != null,
+          title: _editingHour != null
+              ? 'Editar hora ordinaria'
+              : 'Agregar horas ordinarias',
+          description: _editingHour != null
+              ? 'Editando hora ordinaria de ${widget.employee.nombre}.'
+              : 'Registrar horas trabajadas y observacion para ${widget.employee.nombre}.',
+          submitLabel: _editingHour != null ? 'Guardar cambios' : 'Agregar horas',
           onCancelEdit: () {
             setState(_clearOrdinaryHourForm);
           },
@@ -7450,9 +8214,12 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
     required this.minutesController,
     required this.observationController,
     required this.saving,
-    required this.editing,
-    required this.onCancelEdit,
+    this.editing = false,
+    this.onCancelEdit,
     required this.onSubmit,
+    this.title,
+    this.description,
+    this.submitLabel,
     super.key,
   });
 
@@ -7462,12 +8229,23 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
   final TextEditingController observationController;
   final bool saving;
   final bool editing;
-  final VoidCallback onCancelEdit;
+  final VoidCallback? onCancelEdit;
   final VoidCallback onSubmit;
+  final String? title;
+  final String? description;
+  final String? submitLabel;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
+    final displayTitle = title ?? (editing ? 'Editar hora ordinaria' : 'Agregar hora ordinaria');
+    final displayDescription = description ??
+        (editing ? 'Editando un registro manual del dia seleccionado.' : null);
+    final defaultSubmitLabel =
+        saving ? 'Guardando...' : (editing ? 'Guardar cambios' : 'Agregar');
+    final displaySubmitLabel = submitLabel != null
+        ? (saving ? 'Guardando...' : submitLabel!)
+        : defaultSubmitLabel;
 
     return Card(
       elevation: 0,
@@ -7482,17 +8260,17 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              editing ? 'Editar hora ordinaria' : 'Agregar hora ordinaria',
+              displayTitle,
               style: TextStyle(
                 color: palette.text,
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
               ),
             ),
-            if (editing) ...[
+            if (displayDescription != null) ...[
               const SizedBox(height: 4),
               Text(
-                'Editando un registro manual del dia seleccionado.',
+                displayDescription,
                 style: TextStyle(
                   color: palette.muted,
                   fontSize: 12,
@@ -7543,7 +8321,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            if (editing) ...[
+            if (editing && onCancelEdit != null) ...[
               OutlinedButton.icon(
                 onPressed: saving ? null : onCancelEdit,
                 icon: const Icon(Icons.close_rounded),
@@ -7561,13 +8339,7 @@ class EmployeeOrdinaryHourForm extends StatelessWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : Icon(editing ? Icons.save_rounded : Icons.add_rounded),
-              label: Text(
-                saving
-                    ? 'Guardando...'
-                    : editing
-                    ? 'Guardar cambios'
-                    : 'Agregar',
-              ),
+              label: Text(displaySubmitLabel),
             ),
           ],
         ),
@@ -7700,8 +8472,9 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
   bool _loading = true;
   String? _error;
   DailyVinetaRecordsResult? _result;
-  Map<String, int> _mainRoleCounts = const <String, int>{};
-  Map<String, int> _subGroupCounts = const <String, int>{};
+  String _documentKey = 'todos';
+  List<DailyRecordsActivityGroupOption> _documentOptions = const <DailyRecordsActivityGroupOption>[];
+  Map<String, int> _documentCounts = const <String, int>{};
   List<DailyRecordsEmployeeSummary> _employeeSummariesForGroup =
       const <DailyRecordsEmployeeSummary>[];
   List<DailyRecordsEmployeeSummary> _visibleEmployeeSummaries =
@@ -7709,20 +8482,25 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
   int _totalPurosForGroup = 0;
   int _totalActividadesForGroup = 0;
   String _employeeSearch = '';
-  String _mainRoleKey = 'rezagadoras';
-  String _subGroupKey = 'rezago';
 
   @override
   void initState() {
     super.initState();
+    activeSucursalNotifier.addListener(_onSucursalChanged);
     _load();
   }
 
   @override
   void dispose() {
+    activeSucursalNotifier.removeListener(_onSucursalChanged);
     _scrollController.dispose();
     _employeeSearchController.dispose();
     super.dispose();
+  }
+
+  void _onSucursalChanged() {
+    if (!mounted) return;
+    unawaited(_load());
   }
 
   void _resetScroll() {
@@ -7739,8 +8517,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
     final result = _result;
 
     if (result == null) {
-      _mainRoleCounts = const <String, int>{};
-      _subGroupCounts = const <String, int>{};
+      _documentOptions = const <DailyRecordsActivityGroupOption>[];
+      _documentCounts = const <String, int>{};
       _employeeSummariesForGroup = const <DailyRecordsEmployeeSummary>[];
       _visibleEmployeeSummaries = const <DailyRecordsEmployeeSummary>[];
       _totalPurosForGroup = 0;
@@ -7748,31 +8526,56 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       return;
     }
 
-    final currentMainOption = dailyRecordsMainRoleOption(_mainRoleKey);
-    if (!currentMainOption.subOptions.any((s) => s.key == _subGroupKey)) {
-      _subGroupKey = currentMainOption.subOptions.first.key;
+    final activeSuc = activeSucursalNotifier.value;
+    final records = result.records
+        .where((r) => r.sucursal == null || r.sucursal == activeSuc)
+        .toList(growable: false);
+
+    final docSet = <String>{};
+    var hasSinDoc = false;
+    for (final r in records) {
+      final doc = r.documentoNumero?.trim();
+      if (doc != null && doc.isNotEmpty) {
+        docSet.add(doc);
+      } else {
+        hasSinDoc = true;
+      }
+    }
+    final sortedDocs = docSet.toList()..sort();
+
+    final options = <DailyRecordsActivityGroupOption>[
+      const DailyRecordsActivityGroupOption(key: 'todos', label: 'Todos'),
+      ...sortedDocs.map((d) => DailyRecordsActivityGroupOption(key: d, label: 'Doc. #$d')),
+    ];
+    if (hasSinDoc) {
+      options.add(const DailyRecordsActivityGroupOption(key: 'sin_documento', label: 'Sin documento'));
+    }
+    _documentOptions = options;
+
+    if (!options.any((o) => o.key == _documentKey)) {
+      _documentKey = 'todos';
     }
 
-    final groupRecords = dailyRecordsForHierarchy(
-      result.records,
-      _mainRoleKey,
-      _subGroupKey,
-    );
-    final summaries = dailyRecordsEmployeeSummaries(groupRecords);
-
-    _mainRoleCounts = {
-      for (final mainOpt in dailyRecordsMainRoleGroups)
-        mainOpt.key: countRecordsForMainRole(result.records, mainOpt.key),
+    final counts = <String, int>{
+      'todos': records.length,
     };
+    for (final r in records) {
+      final doc = r.documentoNumero?.trim();
+      final key = (doc != null && doc.isNotEmpty) ? doc : 'sin_documento';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    _documentCounts = counts;
 
-    _subGroupCounts = {
-      for (final subOpt in currentMainOption.subOptions)
-        subOpt.key: countRecordsForSubOption(
-          result.records,
-          _mainRoleKey,
-          subOpt.key,
-        ),
-    };
+    final List<DailyVinetaRegistroInfo> filteredRecords;
+    if (_documentKey == 'todos') {
+      filteredRecords = records;
+    } else if (_documentKey == 'sin_documento') {
+      filteredRecords = records.where((r) => r.documentoNumero == null || r.documentoNumero!.trim().isEmpty).toList();
+    } else {
+      filteredRecords = records.where((r) => r.documentoNumero?.trim() == _documentKey).toList();
+    }
+
+    final summaries = dailyRecordsEmployeeSummaries(filteredRecords);
 
     _employeeSummariesForGroup = summaries;
     _visibleEmployeeSummaries = _filteredEmployeeSummaries(summaries);
@@ -7796,6 +8599,7 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
       final result = await widget.authApi.dailyVinetaRegistros(
         widget.token,
         date: _date,
+        sucursal: activeSucursalNotifier.value,
       );
 
       if (!mounted) return;
@@ -7875,8 +8679,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
           authApi: widget.authApi,
           token: widget.token,
           date: _date,
-          activityGroupKey: _subGroupKey,
-          mainRoleKey: _mainRoleKey,
+          activityGroupKey: _documentKey,
+          documentoKey: _documentKey,
           initialSummary: summary,
         ),
       ),
@@ -7918,9 +8722,9 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
     final employeeSummaries = _employeeSummariesForGroup;
     final visibleEmployeeSummaries = _visibleEmployeeSummaries;
     final hasEmployeeSearch = _employeeSearch.trim().isNotEmpty;
-    final mainLabel = dailyRecordsMainRoleOption(_mainRoleKey).label;
-    final subLabel = dailyRecordsSubOptionLabel(_mainRoleKey, _subGroupKey);
-    final activityGroupLabel = '$mainLabel · $subLabel';
+    final activityGroupLabel = _documentKey == 'todos'
+        ? 'Todos los documentos'
+        : (_documentKey == 'sin_documento' ? 'Sin documento' : 'Doc. #$_documentKey');
 
     return RefreshIndicator(
       onRefresh: _load,
@@ -8014,22 +8818,12 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
                 child: DailyRecordsEmployeeListCard(
                   controller: _employeeSearchController,
                   totalEmployees: employeeSummaries.length,
-                  mainRoleKey: _mainRoleKey,
-                  subGroupKey: _subGroupKey,
-                  mainRoleCounts: _mainRoleCounts,
-                  subGroupCounts: _subGroupCounts,
-                  onMainRoleChanged: (newMainKey) {
+                  documentKey: _documentKey,
+                  documentCounts: _documentCounts,
+                  documentOptions: _documentOptions,
+                  onDocumentChanged: (newDocKey) {
                     setState(() {
-                      _mainRoleKey = newMainKey;
-                      final mainOpt = dailyRecordsMainRoleOption(newMainKey);
-                      _subGroupKey = mainOpt.subOptions.first.key;
-                      _updateRecordsDerivedState();
-                    });
-                    _resetScroll();
-                  },
-                  onSubGroupChanged: (newSubKey) {
-                    setState(() {
-                      _subGroupKey = newSubKey;
+                      _documentKey = newDocKey;
                       _updateRecordsDerivedState();
                     });
                     _resetScroll();
@@ -8139,10 +8933,7 @@ List<DailyRecordsEmployeeSummary> dailyRecordsEmployeeSummaries(
 }
 
 class DailyRecordsSubOption {
-  const DailyRecordsSubOption({
-    required this.key,
-    required this.label,
-  });
+  const DailyRecordsSubOption({required this.key, required this.label});
 
   final String key;
   final String label;
@@ -8202,6 +8993,7 @@ const dailyRecordsMainRoleGroups = [
     key: 'por_hora',
     label: 'Por hora',
     subOptions: [
+      DailyRecordsSubOption(key: 'todas', label: 'Todas'),
       DailyRecordsSubOption(key: 'rezagadoras', label: 'Rezagadoras'),
       DailyRecordsSubOption(key: 'anilladoras', label: 'Anilladoras'),
       DailyRecordsSubOption(key: 'llenadoras', label: 'Llenadoras'),
@@ -8225,6 +9017,14 @@ const dailyRecordsActivityGroups = [
   DailyRecordsActivityGroupOption(key: 'anillado', label: 'Anillado'),
   DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
   DailyRecordsActivityGroupOption(key: 'limpieza', label: 'Limpieza'),
+];
+
+const employeeHoursActivityGroups = [
+  DailyRecordsActivityGroupOption(key: 'rezago', label: 'Rezago'),
+  DailyRecordsActivityGroupOption(key: 'anillado', label: 'Anillado'),
+  DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
+  DailyRecordsActivityGroupOption(key: 'limpieza', label: 'Limpieza'),
+  DailyRecordsActivityGroupOption(key: 'hora', label: 'Por hora'),
 ];
 
 const dailyRecordsEmployeeGroups = [
@@ -8257,6 +9057,12 @@ String dailyRecordsSubOptionLabel(String mainRoleKey, String subKey) {
 }
 
 DailyRecordsActivityGroupOption dailyRecordsActivityGroupOption(String key) {
+  for (final option in employeeHoursActivityGroups) {
+    if (option.key == key) {
+      return option;
+    }
+  }
+
   for (final option in dailyRecordsEmployeeGroups) {
     if (option.key == key) {
       return option;
@@ -8310,6 +9116,7 @@ bool dailyRecordMatchesHierarchy(
 ) {
   if (mainRoleKey == 'por_hora') {
     if (!record.porHora) return false;
+    if (subKey == 'todas') return true;
     final empRole = resolveRecordEmployeeRole(record);
     return empRole == subKey;
   }
@@ -8418,6 +9225,17 @@ bool dailyRecordMatchesActivityGroup(
   DailyVinetaRegistroInfo record,
   String groupKey,
 ) {
+  final activityGroup = record.activityGroup?.trim().toLowerCase();
+  if (activityGroup != null && activityGroup.isNotEmpty) {
+    if (activityGroup == groupKey) return true;
+    if (activityGroup == 'rezago' && groupKey == 'rezago') return true;
+    if (activityGroup == 'anillado' && groupKey == 'anillado') return true;
+    if (activityGroup == 'llenado' && groupKey == 'llenado') return true;
+    if (activityGroup == 'limpieza' && groupKey == 'limpieza') return true;
+  }
+
+  final name = _normalizeForMatch(record.actividad.nombre ?? '');
+  final code = _normalizeForMatch(record.actividad.codigoActividad ?? '');
   final text = _normalizeForMatch(
     [
       record.actividad.nombre,
@@ -8427,10 +9245,12 @@ bool dailyRecordMatchesActivityGroup(
   );
 
   return switch (groupKey) {
-    'rezago' => _matchesRezagoActivityText(text),
-    'anillado' => _matchesAnilladoActivityText(text),
+    'rezago' => _matchesRezagoActivityText(name.isNotEmpty ? name : text),
+    'anillado' => _matchesAnilladoActivityText(name.isNotEmpty ? name : text),
+    'limpieza' =>
+      _matchesLimpiezaActivityText(name.isNotEmpty ? name : text) ||
+          code == '103',
     'llenado' => _matchesLlenadoActivityText(text),
-    'limpieza' => _matchesLimpiezaActivityText(text),
     _ => false,
   };
 }
@@ -8458,8 +9278,21 @@ bool _matchesAnilladoActivityText(String text) {
       text.contains('rolado');
 }
 
+bool _matchesLimpiezaActivityText(String text) {
+  if (text.contains('llenado de bolsa')) {
+    return false;
+  }
+
+  return text.contains('limpieza') ||
+      text.contains('limpiad') ||
+      text.contains('limpia') ||
+      text.contains('103');
+}
+
 bool _matchesLlenadoActivityText(String text) {
-  if (_matchesRezagoActivityText(text) || _matchesAnilladoActivityText(text)) {
+  if (_matchesRezagoActivityText(text) ||
+      _matchesAnilladoActivityText(text) ||
+      _matchesLimpiezaActivityText(text)) {
     return false;
   }
 
@@ -8477,21 +9310,6 @@ bool _matchesLlenadoActivityText(String text) {
       text.contains('kretek') ||
       text.contains('swisher');
 }
-
-bool _matchesLimpiezaActivityText(String text) {
-  if (_matchesRezagoActivityText(text) ||
-      _matchesAnilladoActivityText(text) ||
-      _matchesLlenadoActivityText(text)) {
-    return false;
-  }
-
-  return text.contains('limpieza') ||
-      text.contains('limpiad') ||
-      text.contains('limpia');
-}
-
-
-
 
 String dailyRecordsEmployeeGroupKey(DailyVinetaRegistroInfo record) {
   final employee = record.empleado;
@@ -8552,6 +9370,7 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
     super.initState();
     _load();
   }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -8562,6 +9381,7 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
       final result = await widget.authApi.dailyVinetaRegistros(
         widget.token,
         date: _date,
+        sucursal: activeSucursalNotifier.value,
       );
 
       if (!mounted) return;
@@ -8710,16 +9530,16 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
               onPressed: _sharing ? null : _shareReportImage,
               elevation: 4,
               tooltip: 'Compartir estadístico',
-              backgroundColor: palette.isGalaxy
+              backgroundColor: palette.isMonochrome
                   ? palette.primary
                   : (palette.isDark
                       ? const Color(0xFF38BDF8)
                       : palette.primary),
-              foregroundColor: palette.isGalaxy
-                  ? Colors.white
+              foregroundColor: palette.isMonochrome
+                  ? palette.onPrimary
                   : (palette.isDark
                       ? const Color(0xFF0F172A)
-                      : Colors.white),
+                      : palette.onPrimary),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
@@ -8729,11 +9549,11 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        color: palette.isGalaxy
-                            ? Colors.white
+                        color: palette.isMonochrome
+                            ? palette.onPrimary
                             : (palette.isDark
                                 ? const Color(0xFF0F172A)
-                                : Colors.white),
+                                : palette.onPrimary),
                       ),
                     )
                   : const Icon(Icons.send_rounded, size: 22),
@@ -9325,6 +10145,7 @@ class DailyRecordsEmployeeRecordsPage extends StatefulWidget {
     required this.activityGroupKey,
     required this.initialSummary,
     this.mainRoleKey = 'rezagadoras',
+    this.documentoKey,
     super.key,
   });
 
@@ -9333,6 +10154,7 @@ class DailyRecordsEmployeeRecordsPage extends StatefulWidget {
   final DateTime date;
   final String activityGroupKey;
   final String mainRoleKey;
+  final String? documentoKey;
   final DailyRecordsEmployeeSummary initialSummary;
 
   @override
@@ -9366,15 +10188,32 @@ class _DailyRecordsEmployeeRecordsPageState
       final result = await widget.authApi.dailyVinetaRegistros(
         widget.token,
         date: widget.date,
+        sucursal: activeSucursalNotifier.value,
       );
+      final List<DailyVinetaRegistroInfo> filteredRecords;
+      if (widget.documentoKey != null) {
+        if (widget.documentoKey == 'todos') {
+          filteredRecords = result.records;
+        } else if (widget.documentoKey == 'sin_documento') {
+          filteredRecords = result.records
+              .where((r) =>
+                  r.documentoNumero == null ||
+                  r.documentoNumero!.trim().isEmpty)
+              .toList();
+        } else {
+          filteredRecords = result.records
+              .where((r) => r.documentoNumero?.trim() == widget.documentoKey)
+              .toList();
+        }
+      } else {
+        filteredRecords = dailyRecordsForHierarchy(
+          result.records,
+          widget.mainRoleKey,
+          widget.activityGroupKey,
+        );
+      }
       final updatedSummary = findDailyRecordsEmployeeSummary(
-        dailyRecordsEmployeeSummaries(
-          dailyRecordsForHierarchy(
-            result.records,
-            widget.mainRoleKey,
-            widget.activityGroupKey,
-          ),
-        ),
+        dailyRecordsEmployeeSummaries(filteredRecords),
         widget.initialSummary.key,
       );
 
@@ -9836,12 +10675,10 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
   const DailyRecordsEmployeeListCard({
     required this.controller,
     required this.totalEmployees,
-    required this.mainRoleKey,
-    required this.subGroupKey,
-    required this.mainRoleCounts,
-    required this.subGroupCounts,
-    required this.onMainRoleChanged,
-    required this.onSubGroupChanged,
+    required this.documentKey,
+    required this.documentCounts,
+    required this.documentOptions,
+    required this.onDocumentChanged,
     required this.onScanEmployee,
     required this.onSearchChanged,
     super.key,
@@ -9849,12 +10686,10 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
 
   final TextEditingController controller;
   final int totalEmployees;
-  final String mainRoleKey;
-  final String subGroupKey;
-  final Map<String, int> mainRoleCounts;
-  final Map<String, int> subGroupCounts;
-  final ValueChanged<String> onMainRoleChanged;
-  final ValueChanged<String> onSubGroupChanged;
+  final String documentKey;
+  final Map<String, int> documentCounts;
+  final List<DailyRecordsActivityGroupOption> documentOptions;
+  final ValueChanged<String> onDocumentChanged;
   final VoidCallback onScanEmployee;
   final ValueChanged<String> onSearchChanged;
 
@@ -9862,7 +10697,6 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final hasSearch = controller.text.trim().isNotEmpty;
-    final currentMainOption = dailyRecordsMainRoleOption(mainRoleKey);
 
     return Card(
       elevation: 0,
@@ -9899,18 +10733,11 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
-            DailyRecordsMainRoleTabs(
-              selectedKey: mainRoleKey,
-              groupCounts: mainRoleCounts,
-              options: dailyRecordsMainRoleGroups,
-              onChanged: onMainRoleChanged,
-            ),
-            const SizedBox(height: 8),
-            DailyRecordsSubGroupTabs(
-              selectedKey: subGroupKey,
-              groupCounts: subGroupCounts,
-              options: currentMainOption.subOptions,
-              onChanged: onSubGroupChanged,
+            DailyRecordsActivityGroupTabs(
+              selectedKey: documentKey,
+              groupCounts: documentCounts,
+              options: documentOptions,
+              onChanged: onDocumentChanged,
             ),
             const SizedBox(height: 12),
             TextField(
@@ -10188,35 +11015,40 @@ class DailyRecordsMainRoleTabs extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
       child: Row(
-        children: options.map((option) {
-          final selected = option.key == selectedKey;
-          final count = groupCounts[option.key] ?? 0;
-          final isLast = option == options.last;
+        children: options
+            .map((option) {
+              final selected = option.key == selectedKey;
+              final count = groupCounts[option.key] ?? 0;
+              final isLast = option == options.last;
 
-          return Padding(
-            padding: EdgeInsets.only(right: isLast ? 0 : 6),
-            child: ChoiceChip(
-              selected: selected,
-              onSelected: (_) => onChanged(option.key),
-              label: Text(
-                '${option.label} ($count)',
-                style: TextStyle(
-                  color: selected ? palette.onPrimary : palette.text,
-                  fontSize: 11.5,
-                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+              return Padding(
+                padding: EdgeInsets.only(right: isLast ? 0 : 6),
+                child: ChoiceChip(
+                  selected: selected,
+                  onSelected: (_) => onChanged(option.key),
+                  label: Text(
+                    '${option.label} ($count)',
+                    style: TextStyle(
+                      color: selected ? palette.onPrimary : palette.text,
+                      fontSize: 11.5,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                    ),
+                  ),
+                  selectedColor: palette.primary,
+                  backgroundColor: palette.surfaceSoft,
+                  side: BorderSide(
+                    color: selected ? palette.primary : palette.border,
+                  ),
+                  showCheckmark: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 6,
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-              ),
-              selectedColor: palette.primary,
-              backgroundColor: palette.surfaceSoft,
-              side: BorderSide(
-                color: selected ? palette.primary : palette.border,
-              ),
-              showCheckmark: false,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          );
-        }).toList(growable: false),
+              );
+            })
+            .toList(growable: false),
       ),
     );
   }
@@ -10244,41 +11076,46 @@ class DailyRecordsSubGroupTabs extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
       child: Row(
-        children: options.map((option) {
-          final selected = option.key == selectedKey;
-          final count = groupCounts[option.key] ?? 0;
-          final isLast = option == options.last;
+        children: options
+            .map((option) {
+              final selected = option.key == selectedKey;
+              final count = groupCounts[option.key] ?? 0;
+              final isLast = option == options.last;
 
-          final activeColor = palette.primary;
+              final activeColor = palette.primary;
 
-          return Padding(
-            padding: EdgeInsets.only(right: isLast ? 0 : 6),
-            child: ChoiceChip(
-              selected: selected,
-              onSelected: (_) => onChanged(option.key),
-              label: Text(
-                '${option.label} · $count',
-                style: TextStyle(
-                  color: selected ? activeColor : palette.muted,
-                  fontSize: 11.0,
-                  fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+              return Padding(
+                padding: EdgeInsets.only(right: isLast ? 0 : 6),
+                child: ChoiceChip(
+                  selected: selected,
+                  onSelected: (_) => onChanged(option.key),
+                  label: Text(
+                    '${option.label} · $count',
+                    style: TextStyle(
+                      color: selected ? activeColor : palette.muted,
+                      fontSize: 11.0,
+                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                    ),
+                  ),
+                  selectedColor: activeColor.withValues(
+                    alpha: palette.isDark ? 0.18 : 0.10,
+                  ),
+                  backgroundColor: palette.surfaceSoft.withValues(alpha: 0.6),
+                  side: BorderSide(
+                    color: selected
+                        ? activeColor
+                        : palette.border.withValues(alpha: 0.6),
+                  ),
+                  showCheckmark: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 4,
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-              ),
-              selectedColor: activeColor.withValues(
-                alpha: palette.isDark ? 0.18 : 0.10,
-              ),
-              backgroundColor: palette.surfaceSoft.withValues(alpha: 0.6),
-              side: BorderSide(
-                color: selected
-                    ? activeColor
-                    : palette.border.withValues(alpha: 0.6),
-              ),
-              showCheckmark: false,
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          );
-        }).toList(growable: false),
+              );
+            })
+            .toList(growable: false),
       ),
     );
   }
@@ -10306,35 +11143,40 @@ class DailyRecordsActivityGroupTabs extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
       child: Row(
-        children: options.map((option) {
-          final selected = option.key == selectedKey;
-          final count = groupCounts[option.key] ?? 0;
-          final isLast = option == options.last;
+        children: options
+            .map((option) {
+              final selected = option.key == selectedKey;
+              final count = groupCounts[option.key] ?? 0;
+              final isLast = option == options.last;
 
-          return Padding(
-            padding: EdgeInsets.only(right: isLast ? 0 : 6),
-            child: ChoiceChip(
-              selected: selected,
-              onSelected: (_) => onChanged(option.key),
-              label: Text(
-                '${option.label} ($count)',
-                style: TextStyle(
-                  color: selected ? palette.onPrimary : palette.text,
-                  fontSize: 11.2,
-                  fontWeight: FontWeight.w900,
+              return Padding(
+                padding: EdgeInsets.only(right: isLast ? 0 : 6),
+                child: ChoiceChip(
+                  selected: selected,
+                  onSelected: (_) => onChanged(option.key),
+                  label: Text(
+                    '${option.label} ($count)',
+                    style: TextStyle(
+                      color: selected ? palette.onPrimary : palette.text,
+                      fontSize: 11.2,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  selectedColor: palette.primary,
+                  backgroundColor: palette.surfaceSoft,
+                  side: BorderSide(
+                    color: selected ? palette.primary : palette.border,
+                  ),
+                  showCheckmark: false,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 6,
+                  ),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
-              ),
-              selectedColor: palette.primary,
-              backgroundColor: palette.surfaceSoft,
-              side: BorderSide(
-                color: selected ? palette.primary : palette.border,
-              ),
-              showCheckmark: false,
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          );
-        }).toList(growable: false),
+              );
+            })
+            .toList(growable: false),
       ),
     );
   }
@@ -10583,7 +11425,13 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
-    final group = dailyRecordsActivityGroupOption(activityGroupKey);
+    final groupLabel = activityGroupKey == 'todos'
+        ? 'Todos los documentos'
+        : (activityGroupKey == 'sin_documento'
+            ? 'Sin documento'
+            : (int.tryParse(activityGroupKey) != null
+                ? 'Doc. #$activityGroupKey'
+                : dailyRecordsActivityGroupOption(activityGroupKey).label));
 
     return Card(
       elevation: 0,
@@ -10608,7 +11456,7 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${group.label} · Código ${summary.displayCode} · ${formatWorkDate(date)}',
+              '$groupLabel · Código ${summary.displayCode} · ${formatWorkDate(date)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -10674,7 +11522,6 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
     );
   }
 }
-
 
 class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
   const DailyRecordsEmployeeRecordListCard({
@@ -10916,13 +11763,24 @@ class DailyEmployeeRecordDetailTile extends StatelessWidget {
 }
 
 String _safeRecordVineta(DailyVinetaRegistroInfo record) {
+  final code = record.codigoVineta?.trim();
+
+  if (code != null && code.isNotEmpty) {
+    final lower = code.toLowerCase();
+    if (lower.startsWith('l-') ||
+        lower.startsWith('p-') ||
+        lower.startsWith('r-') ||
+        lower.startsWith('o-') ||
+        lower.startsWith('or-')) {
+      return 'ID $code';
+    }
+  }
+
   final apiId = record.vinetaApiId;
 
   if (apiId != null) {
     return 'ID $apiId';
   }
-
-  final code = record.codigoVineta?.trim();
 
   if (code != null && code.isNotEmpty) {
     return code;
@@ -11259,7 +12117,11 @@ class DailyRecordTile extends StatelessWidget {
             const SizedBox(height: 7),
             Row(
               children: [
-                Icon(Icons.workspaces_rounded, color: palette.primary, size: 15),
+                Icon(
+                  Icons.workspaces_rounded,
+                  color: palette.primary,
+                  size: 15,
+                ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -11297,6 +12159,13 @@ class DailyRecordTile extends StatelessWidget {
                   icon: Icons.schedule_rounded,
                   label: 'Hora',
                   value: record.registeredLabel,
+                ),
+                DailyRecordInfoItem(
+                  icon: Icons.description_rounded,
+                  label: 'Documento',
+                  value: record.documentoNumero != null && record.documentoNumero!.trim().isNotEmpty
+                      ? 'Doc. #${record.documentoNumero}'
+                      : 'Sin documento',
                 ),
                 if (!active)
                   DailyRecordInfoItem(
@@ -12145,6 +13014,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
+    final themeScope = AppThemeScope.maybeOf(context);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 20, 8, 112),
@@ -12152,8 +13022,274 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
         SectionPlaceholderCard(
           icon: Icons.tune_rounded,
           title: 'Ajustes',
-          description: 'Configura las URLs base de los servidores Laravel.',
+          description: 'Configura las URLs de los servidores Laravel, el tema visual y la sucursal ERP activa.',
           color: palette.primary,
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide.none,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: palette.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.palette_rounded, color: palette.primary, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Tema de la aplicación',
+                            style: TextStyle(
+                              color: palette.text,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Elige tu estilo visual preferido para todas las pantallas.',
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  children: AppThemePreference.values.map((pref) {
+                    final isSelected = themeScope?.preference == pref;
+                    final (bgGradient, ringColor, checkColor) = switch (pref) {
+                      AppThemePreference.dark => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF0B1220), Color(0xFF1E293B), Color(0xFF38BDF8)],
+                        ),
+                        const Color(0xFF38BDF8),
+                        Colors.white,
+                      ),
+                      AppThemePreference.light => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Colors.white, Color(0xFFF1F5F9), Color(0xFFBAE6FD)],
+                        ),
+                        const Color(0xFF0284C7),
+                        const Color(0xFF0284C7),
+                      ),
+                      AppThemePreference.galaxy => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF581C87), Color(0xFF7C3AED), Color(0xFFA855F7)],
+                        ),
+                        const Color(0xFF7C3AED),
+                        Colors.white,
+                      ),
+                      AppThemePreference.monochrome => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF121316), Color(0xFF27272A), Color(0xFF71717A)],
+                        ),
+                        const Color(0xFFE4E4E7),
+                        Colors.white,
+                      ),
+                      AppThemePreference.emerald => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF064E3B), Color(0xFF047857), Color(0xFF10B981)],
+                        ),
+                        const Color(0xFF047857),
+                        Colors.white,
+                      ),
+                      AppThemePreference.ios => (
+                        const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFF2F2F7), Colors.white, Color(0xFF007AFF)],
+                        ),
+                        const Color(0xFF007AFF),
+                        const Color(0xFF007AFF),
+                      ),
+                    };
+
+                    return InkWell(
+                      onTap: () {
+                        if (themeScope?.preference != pref) {
+                          themeScope?.setTheme?.call(pref);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(26),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isSelected ? ringColor : palette.border,
+                            width: isSelected ? 3.0 : 1.5,
+                          ),
+                          boxShadow: isSelected
+                              ? [
+                                  BoxShadow(
+                                    color: ringColor.withValues(alpha: 0.38),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        padding: const EdgeInsets.all(3.5),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: bgGradient,
+                            border: Border.all(
+                              color: isSelected ? Colors.transparent : Colors.black12,
+                              width: 0.5,
+                            ),
+                          ),
+                          child: isSelected
+                              ? Center(
+                                  child: Icon(
+                                    Icons.check_rounded,
+                                    size: 20,
+                                    color: checkColor,
+                                  ),
+                                )
+                              : null,
+                        ),
+                      ),
+                    );
+                  }).toList(growable: false),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide.none,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: palette.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.store_mall_directory_rounded, color: palette.primary, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Sucursal ERP activa',
+                            style: TextStyle(
+                              color: palette.text,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Filtra los documentos y registros por la sucursal seleccionada.',
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                ValueListenableBuilder<int>(
+                  valueListenable: activeSucursalNotifier,
+                  builder: (context, currentSucursal, _) {
+                    return Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [1, 2, 3, 4, 5].map((sucursal) {
+                        final isSelected = currentSucursal == sucursal;
+                        return ChoiceChip(
+                          label: Text(
+                            'Sucursal $sucursal',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                              color: isSelected ? palette.onPrimary : palette.text,
+                            ),
+                          ),
+                          selected: isSelected,
+                          selectedColor: palette.primary,
+                          backgroundColor: palette.surfaceSoft,
+                          side: BorderSide(
+                            color: isSelected ? palette.primary : palette.border.withValues(alpha: 0.5),
+                          ),
+                          showCheckmark: isSelected,
+                          checkmarkColor: palette.onPrimary,
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          onSelected: (selected) {
+                            if (selected && currentSucursal != sucursal) {
+                              unawaited(setActiveSucursal(sucursal));
+                              showAppMessage(
+                                context,
+                                'Sucursal $sucursal configurada como activa.',
+                                isError: false,
+                              );
+                            }
+                          },
+                        );
+                      }).toList(growable: false),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         Card(
@@ -12336,10 +13472,13 @@ class _SpaceGalaxyAtmosphere extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final isMono = palette.isMonochrome;
+    final isEmerald = palette.isEmerald;
+    final isIos = palette.isIos;
+
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Color(0xFF070709),
-      ),
+      decoration: BoxDecoration(color: palette.scaffold),
       child: Stack(
         children: [
           Positioned(
@@ -12352,7 +13491,9 @@ class _SpaceGalaxyAtmosphere extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF4F46E5).withValues(alpha: 0.08),
+                    palette.primary.withValues(
+                      alpha: isMono ? 0.035 : (isEmerald ? 0.055 : (isIos ? 0.035 : 0.05)),
+                    ),
                     Colors.transparent,
                   ],
                 ),
@@ -12369,7 +13510,9 @@ class _SpaceGalaxyAtmosphere extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: RadialGradient(
                   colors: [
-                    const Color(0xFF4338CA).withValues(alpha: 0.06),
+                    palette.accent.withValues(
+                      alpha: isMono ? 0.030 : (isEmerald ? 0.045 : (isIos ? 0.025 : 0.04)),
+                    ),
                     Colors.transparent,
                   ],
                 ),
@@ -12412,25 +13555,25 @@ class AppScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final rolesLabel = user.roles.isEmpty ? 'Sin rol' : user.roles.join(', ');
-    final isDarkOrGalaxy = palette.isDark || palette.isGalaxy;
+    final isDark = palette.isDark;
 
     return Scaffold(
       backgroundColor: palette.scaffold,
       appBar: AppBar(
         backgroundColor: palette.scaffold,
-        foregroundColor: isDarkOrGalaxy ? Colors.white : palette.text,
+        foregroundColor: isDark ? Colors.white : palette.text,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         title: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: authApi != null && token != null && onUserUpdated != null
               ? () => showProfilePhotoSheet(
-                    context: context,
-                    user: user,
-                    authApi: authApi!,
-                    token: token!,
-                    onUserUpdated: onUserUpdated!,
-                  )
+                  context: context,
+                  user: user,
+                  authApi: authApi!,
+                  token: token!,
+                  onUserUpdated: onUserUpdated!,
+                )
               : null,
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
@@ -12449,11 +13592,7 @@ class AppScaffold extends StatelessWidget {
                           color: palette.primary,
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: isDarkOrGalaxy
-                                ? (palette.isGalaxy
-                                    ? const Color(0xFF231E44)
-                                    : appDarkPanel)
-                                : Colors.white,
+                            color: isDark ? appDarkPanel : Colors.white,
                             width: 1.5,
                           ),
                         ),
@@ -12477,7 +13616,7 @@ class AppScaffold extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: isDarkOrGalaxy ? Colors.white : palette.text,
+                          color: isDark ? Colors.white : palette.text,
                           fontSize: 16,
                           fontWeight: FontWeight.w900,
                         ),
@@ -12488,11 +13627,11 @@ class AppScaffold extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: isDarkOrGalaxy
-                              ? (palette.isGalaxy
-                                  ? const Color(0xFFA5B4FC)
-                                  : const Color(0xFF7DD3FC))
-                              : palette.muted,
+                          color: palette.isMonochrome
+                              ? const Color(0xFFD4D4D8)
+                              : (isDark
+                                  ? const Color(0xFF7DD3FC)
+                                  : palette.muted),
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                         ),
@@ -12505,9 +13644,7 @@ class AppScaffold extends StatelessWidget {
           ),
         ),
         actions: [
-          const AppNotificationButton(
-            compact: true,
-          ),
+          const AppNotificationButton(compact: true),
           ThemeToggleButton(
             isDarkMode: isDarkMode,
             preference: preference,
@@ -12518,7 +13655,7 @@ class AppScaffold extends StatelessWidget {
             tooltip: 'Cerrar sesión',
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded, size: 22),
-            color: isDarkOrGalaxy
+            color: isDark
                 ? Colors.white.withValues(alpha: 0.85)
                 : palette.text.withValues(alpha: 0.85),
           ),
@@ -12527,17 +13664,14 @@ class AppScaffold extends StatelessWidget {
       ),
       extendBody: true,
       body: SizedBox.expand(
-        child: palette.isGalaxy
+        child: palette.isLightVariant
             ? Stack(
                 children: [
                   const Positioned.fill(child: _SpaceGalaxyAtmosphere()),
                   Positioned.fill(child: child),
                 ],
               )
-            : ColoredBox(
-                color: palette.scaffold,
-                child: child,
-              ),
+            : ColoredBox(color: palette.scaffold, child: child),
       ),
       bottomNavigationBar: bottomNavigationBar == null
           ? null
@@ -12547,11 +13681,7 @@ class AppScaffold extends StatelessWidget {
 }
 
 class AppUserAvatar extends StatelessWidget {
-  const AppUserAvatar({
-    required this.user,
-    this.size = 36.0,
-    super.key,
-  });
+  const AppUserAvatar({required this.user, this.size = 36.0, super.key});
 
   final UserProfile user;
   final double size;
@@ -12716,7 +13846,9 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
       if (!mounted) return;
       setState(() {
         _uploading = false;
-        _errorMessage = error is ApiException ? error.message : 'No se pudo subir la foto: $error';
+        _errorMessage = error is ApiException
+            ? error.message
+            : 'No se pudo subir la foto: $error';
       });
     }
   }
@@ -12766,7 +13898,9 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
                 ),
               ),
               IconButton(
-                onPressed: _uploading ? null : () => Navigator.of(context).pop(),
+                onPressed: _uploading
+                    ? null
+                    : () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close_rounded, size: 20),
                 visualDensity: VisualDensity.compact,
               ),
@@ -12792,10 +13926,7 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
                       end: Alignment.bottomRight,
                     ),
                   ),
-                  child: AppUserAvatar(
-                    user: widget.user,
-                    size: 88,
-                  ),
+                  child: AppUserAvatar(user: widget.user, size: 88),
                 ),
                 if (_uploading)
                   Container(
@@ -12841,21 +13972,29 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
             decoration: BoxDecoration(
-              color: palette.isGalaxy
-                  ? const Color(0xFF6366F1).withValues(alpha: 0.15)
-                  : (palette.isDark
-                      ? const Color(0xFF38BDF8).withValues(alpha: 0.15)
-                      : palette.primary.withValues(alpha: 0.12)),
+              color: palette.isMonochrome
+                  ? const Color(0xFF3F3F46).withValues(alpha: 0.5)
+                  : (palette.isGalaxy
+                      ? const Color(0xFF6366F1).withValues(alpha: 0.15)
+                      : (palette.isLightVariant
+                            ? palette.primarySoft
+                            : (palette.isDark
+                                  ? const Color(0xFF38BDF8).withValues(alpha: 0.15)
+                                  : palette.primary.withValues(alpha: 0.12)))),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
               rolesLabel,
               style: TextStyle(
-                color: palette.isGalaxy
-                    ? const Color(0xFFA5B4FC)
-                    : (palette.isDark
-                        ? const Color(0xFF7DD3FC)
-                        : palette.primary),
+                color: palette.isMonochrome
+                    ? const Color(0xFFE4E4E7)
+                    : (palette.isGalaxy
+                        ? const Color(0xFFA5B4FC)
+                        : (palette.isLightVariant
+                              ? palette.primary
+                              : (palette.isDark
+                                    ? const Color(0xFF7DD3FC)
+                                    : palette.primary))),
                 fontSize: 11,
                 fontWeight: FontWeight.w900,
               ),
@@ -12872,7 +14011,11 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline_rounded, color: Colors.red, size: 18),
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: Colors.red,
+                    size: 18,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -12903,7 +14046,9 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(palette.primary),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        palette.primary,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -13038,17 +14183,9 @@ class ConcaveCurvedBottomMenuPainter extends CustomPainter {
 
     final path = Path();
     path.moveTo(0, 0);
-    path.arcToPoint(
-      Offset(r, r),
-      radius: Radius.circular(r),
-      clockwise: false,
-    );
+    path.arcToPoint(Offset(r, r), radius: Radius.circular(r), clockwise: false);
     path.lineTo(w - r, r);
-    path.arcToPoint(
-      Offset(w, 0),
-      radius: Radius.circular(r),
-      clockwise: false,
-    );
+    path.arcToPoint(Offset(w, 0), radius: Radius.circular(r), clockwise: false);
     path.lineTo(w, h);
     path.lineTo(0, h);
     path.close();
@@ -13127,31 +14264,39 @@ class MobileHomeBottomMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final sections = _sections;
-    final isGalaxy = palette.isGalaxy;
+    final isLightVar = palette.isLightVariant;
 
-    final barColor = isGalaxy
-        ? const Color(0xFF6366F1)
-        : (palette.isDark
-            ? const Color(0xFF38BDF8)
-            : const Color(0xFF0F172A));
-    final selectedColor = isGalaxy
-        ? const Color(0xFF0E0B1A)
-        : (palette.isDark ? const Color(0xFF0F172A) : Colors.white);
-    final unselectedColor = isGalaxy
-        ? const Color(0xFF0E0B1A).withValues(alpha: 0.50)
-        : (palette.isDark
-            ? const Color(0xFF0F172A).withValues(alpha: 0.50)
-            : const Color(0xFF94A3B8));
+    final barColor = isLightVar
+        ? palette.primary
+        : (palette.isMonochrome
+              ? const Color(0xFF1E2024)
+              : (palette.isDark ? const Color(0xFF38BDF8) : const Color(0xFF0F172A)));
+    final selectedColor = isLightVar
+        ? palette.onPrimary
+        : (palette.isMonochrome
+              ? const Color(0xFFF4F4F6)
+              : (palette.isDark ? const Color(0xFF0F172A) : Colors.white));
+    final unselectedColor = isLightVar
+        ? palette.onPrimary.withValues(alpha: 0.60)
+        : (palette.isMonochrome
+              ? const Color(0xFF71717A)
+              : (palette.isDark
+                    ? const Color(0xFF0F172A).withValues(alpha: 0.50)
+                    : const Color(0xFF94A3B8)));
     const curveRadius = 22.0;
 
     final bottomNavContent = CustomPaint(
       painter: ConcaveCurvedBottomMenuPainter(
         color: barColor,
         radius: curveRadius,
-        topBorderColor: Colors.transparent,
-        shadowColor: isGalaxy
-            ? const Color(0x66000000)
+        topBorderColor: palette.isMonochrome
+            ? const Color(0xFF373A42)
             : Colors.transparent,
+        shadowColor: isLightVar
+            ? palette.primary.withValues(alpha: 0.22)
+            : (palette.isMonochrome
+                  ? Colors.black.withValues(alpha: 0.45)
+                  : Colors.transparent),
       ),
       child: SafeArea(
         top: false,
@@ -13226,11 +14371,7 @@ class _MobileHomeBottomItem extends StatelessWidget {
                   duration: const Duration(milliseconds: 200),
                   curve: Curves.easeOutCubic,
                   scale: selected ? 1.18 : 1.0,
-                  child: Icon(
-                    icon,
-                    color: resolvedColor,
-                    size: 24,
-                  ),
+                  child: Icon(icon, color: resolvedColor, size: 24),
                 );
               },
             ),
@@ -14849,6 +15990,47 @@ class _VinetaCodeSearchPageState extends State<VinetaCodeSearchPage> {
   }
 }
 
+bool _isLimpiaPurosEmployee(EmployeeInfo employee) {
+  if (_employeeUsesRezagoOverride(employee)) {
+    return false;
+  }
+
+  final cargo = _normalizeForMatch(employee.cargo ?? '');
+  final area = _normalizeForMatch(employee.area ?? '');
+
+  return cargo.contains('limpia') ||
+      cargo.contains('limpi') ||
+      area.contains('limpia') ||
+      area.contains('limpi');
+}
+
+ActivityInfo? _findLimpiezaActivity(List<ActivityInfo> activities) {
+  for (final activity in activities) {
+    final code = activity.codigoActividad?.trim() ?? '';
+    if (code == '103') {
+      return activity;
+    }
+  }
+
+  for (final activity in activities) {
+    final name = _normalizeForMatch(activity.nombre ?? '');
+    if (name.contains('limpieza de puros')) {
+      return activity;
+    }
+  }
+
+  for (final activity in activities) {
+    final name = _normalizeForMatch(activity.nombre ?? '');
+    if (name.contains('limpieza') ||
+        name.contains('limpiado') ||
+        name.contains('limpia')) {
+      return activity;
+    }
+  }
+
+  return null;
+}
+
 ActivityInfo? _suggestActivityForEmployee(
   EmployeeInfo employee,
   List<ActivityInfo> activities,
@@ -14859,6 +16041,10 @@ ActivityInfo? _suggestActivityForEmployee(
 
   if (_employeeUsesRezagoOverride(employee)) {
     return _bestMultiScanActivityMatch(activities, VinetaProcessGroup.rezago);
+  }
+
+  if (_isLimpiaPurosEmployee(employee)) {
+    return _findLimpiezaActivity(activities);
   }
 
   final group = _multiScanActivityGroupForEmployee(employee);
@@ -14874,12 +16060,14 @@ ActivityInfo? _suggestActivityForEmployee(
   );
 
   if (role.contains('limpia')) {
-    return _bestActivityMatchByName(activities, const ['limpieza', 'limpiado']);
+    final match = _findLimpiezaActivity(activities);
+    if (match != null) {
+      return match;
+    }
   }
 
   return activities.firstOrNull;
 }
-
 
 bool _employeeUsesRezagoOverride(EmployeeInfo employee) {
   final code = employee.codigo.trim();
@@ -14887,37 +16075,13 @@ bool _employeeUsesRezagoOverride(EmployeeInfo employee) {
   return code == '8219' || code == '8217';
 }
 
-ActivityInfo? _bestActivityMatchByName(
-  List<ActivityInfo> activities,
-  List<String> terms, {
-  List<String> excludedTerms = const [],
-}) {
-  for (final term in terms) {
-    final normalizedTerm = _normalizeForMatch(term);
-
-    for (final activity in activities) {
-      final name = _normalizeForMatch(activity.nombre ?? '');
-
-      if (name.isEmpty || !name.contains(normalizedTerm)) {
-        continue;
-      }
-
-      if (excludedTerms.any(
-        (excluded) => name.contains(_normalizeForMatch(excluded)),
-      )) {
-        continue;
-      }
-
-      return activity;
-    }
-  }
-
-  return null;
-}
-
 VinetaProcessGroup? _multiScanActivityGroupForEmployee(EmployeeInfo employee) {
   if (_employeeUsesRezagoOverride(employee)) {
     return VinetaProcessGroup.rezago;
+  }
+
+  if (_isLimpiaPurosEmployee(employee)) {
+    return null;
   }
 
   final role = _normalizeForMatch(
@@ -14938,8 +16102,7 @@ VinetaProcessGroup? _multiScanActivityGroupForEmployee(EmployeeInfo employee) {
     return VinetaProcessGroup.llenado;
   }
 
-  if (role.contains('anill') ||
-      role.contains('celofan')) {
+  if (role.contains('anill') || role.contains('celofan')) {
     return VinetaProcessGroup.anillado;
   }
 
@@ -15014,9 +16177,7 @@ ActivityInfo? _bestMultiScanActivityMatch(
 
   if (group == VinetaProcessGroup.llenado && process != null) {
     final uncompletedActivities = filteredActivities
-        .where(
-          (act) => multiScanActivityErrorForProcess(act, process) == null,
-        )
+        .where((act) => multiScanActivityErrorForProcess(act, process) == null)
         .toList(growable: false);
 
     if (uncompletedActivities.isNotEmpty) {
@@ -15028,8 +16189,6 @@ ActivityInfo? _bestMultiScanActivityMatch(
   // Por lo tanto, la primera actividad en filteredActivities es la actividad escaneada más reciente para este grupo.
   return filteredActivities.firstOrNull;
 }
-
-
 
 VinetaProcessStepActivityInfo? _findCompletedActivityInStep(
   VinetaProcessStepInfo step,
@@ -15106,7 +16265,6 @@ String? multiScanActivityErrorForProcess(
 
   return null;
 }
-
 
 int multiScanActivityMultiplier(String? activityName) {
   final name = activityName?.trim() ?? '';
@@ -15238,12 +16396,21 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   DateTime? _lastDetectedAt;
   int _dailySummaryRequestId = 0;
   int _cameraRestartRequestId = 0;
+  int _selectedSucursal = defaultSucursal;
+  List<DocumentoEmpaqueInfo> _documentos = const [];
+  DocumentoEmpaqueInfo? _selectedDocumento;
+  bool _loadingDocumentos = false;
+  String? _documentosError;
+  int _documentosRequestId = 0;
 
   @override
   void initState() {
     super.initState();
+    _selectedSucursal = activeSucursalNotifier.value;
+    activeSucursalNotifier.addListener(_onSucursalChanged);
     _scanDateTime = DateTime.now();
     _quantityController.addListener(_applyGlobalQuantityToEntries);
+    _loadDocumentos();
 
     final remembered = _rememberedVinetaRegistro;
 
@@ -15251,7 +16418,6 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       _taskMode = remembered.taskMode;
       _employee = remembered.employee;
       _employeeCodeController.text = remembered.employee.codigo;
-      _quantityController.text = remembered.cantidadPuros.toString();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -15262,6 +16428,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
   @override
   void dispose() {
+    activeSucursalNotifier.removeListener(_onSucursalChanged);
     _cameraRestartRequestId++;
     _quantityController.removeListener(_applyGlobalQuantityToEntries);
     _employeeCodeController.dispose();
@@ -15269,6 +16436,16 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     _hoursController.dispose();
     _cameraController.dispose();
     super.dispose();
+  }
+
+  void _onSucursalChanged() {
+    if (!mounted) return;
+    if (_selectedSucursal != activeSucursalNotifier.value) {
+      setState(() {
+        _selectedSucursal = activeSucursalNotifier.value;
+      });
+      unawaited(_loadDocumentos());
+    }
   }
 
   void _handleEmployeeCodeChanged(String value) {
@@ -15604,6 +16781,48 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     });
 
     unawaited(_loadEmployeeDailySummary());
+    unawaited(_loadDocumentos());
+  }
+
+  Future<void> _loadDocumentos() async {
+    final requestId = ++_documentosRequestId;
+    setState(() {
+      _loadingDocumentos = true;
+      _documentosError = null;
+    });
+
+    try {
+      final docs = await widget.authApi.getDocumentosEmpaques(
+        widget.token,
+        fecha: _scanDateTime,
+        sucursal: _selectedSucursal,
+      );
+
+      if (!mounted || requestId != _documentosRequestId) return;
+
+      setState(() {
+        _documentos = docs;
+        _loadingDocumentos = false;
+        if (_selectedDocumento != null) {
+          final found = docs.where((d) => d.numero == _selectedDocumento!.numero).firstOrNull;
+          _selectedDocumento = found;
+        }
+      });
+    } on ApiException catch (e) {
+      if (!mounted || requestId != _documentosRequestId) return;
+      setState(() {
+        _documentos = const [];
+        _loadingDocumentos = false;
+        _documentosError = e.message;
+      });
+    } catch (_) {
+      if (!mounted || requestId != _documentosRequestId) return;
+      setState(() {
+        _documentos = const [];
+        _loadingDocumentos = false;
+        _documentosError = 'No se pudieron cargar los documentos del ERP.';
+      });
+    }
   }
 
   Future<ActivityInfo?> _multiScanActivityForEmployee(
@@ -15611,6 +16830,31 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     List<ActivityInfo> productActivities, {
     VinetaProcessInfo? process,
   }) async {
+    if (_isLimpiaPurosEmployee(employee)) {
+      final match = _findLimpiezaActivity(productActivities);
+      if (match != null) {
+        return match;
+      }
+      try {
+        final activities = await widget.authApi.searchActivities(
+          widget.token,
+          query: 'Limpieza de puros',
+          generalCatalog: true,
+        );
+        return _findLimpiezaActivity(activities) ??
+            activities.firstOrNull ??
+            const ActivityInfo(
+              codigoActividad: '103',
+              nombre: 'Limpieza de Puros',
+            );
+      } catch (_) {
+        return const ActivityInfo(
+          codigoActividad: '103',
+          nombre: 'Limpieza de Puros',
+        );
+      }
+    }
+
     final group = _multiScanActivityGroupForEmployee(employee);
 
     if (group == null) {
@@ -15717,7 +16961,25 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       String? entryError;
 
       if (activity == null) {
-        if (employeeGroup == null) {
+        if (_isLimpiaPurosEmployee(employee)) {
+          try {
+            activity = await _multiScanActivityForEmployee(
+              employee,
+              activities,
+              process: process,
+            );
+          } on ApiException catch (error) {
+            activityLoadError = error.message;
+          } catch (_) {
+            activityLoadError = 'No se pudo buscar actividad de limpieza.';
+          }
+
+          if (!mounted) return;
+
+          if (activity == null) {
+            entryError = activityLoadError ?? 'No se encontro actividad de Limpieza de Puros.';
+          }
+        } else if (employeeGroup == null) {
           entryError = 'No hay grupo de actividad para este cargo.';
         } else if (employeeGroup == VinetaProcessGroup.llenado) {
           try {
@@ -15780,6 +17042,17 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         entryError = multiScanActivityErrorForProcess(activity, process);
       }
 
+      final currentQuantityText = _quantityController.text.trim();
+      final vinetaCantidad =
+          (vineta.cantidadPuros != null && vineta.cantidadPuros! > 0)
+              ? vineta.cantidadPuros.toString()
+              : currentQuantityText;
+
+      if (_entries.isEmpty && vinetaCantidad.isNotEmpty) {
+        _quantityController.removeListener(_applyGlobalQuantityToEntries);
+        _quantityController.text = vinetaCantidad;
+        _quantityController.addListener(_applyGlobalQuantityToEntries);
+      }
 
       final entry = _MultiVinetaEntry(
         key: key,
@@ -15787,7 +17060,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         product: product,
         activity: activity,
         process: process,
-        cantidadText: _quantityController.text.trim(),
+        cantidadText: vinetaCantidad,
         error: entryError,
       );
 
@@ -16129,6 +17402,9 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
           minutosTrabajados: minutesByEntry[index],
           registradoEn: _scanDateTime,
           taskMode: taskMode,
+          documentoNumero: _selectedDocumento?.numero,
+          documentoEmpaqueId: _selectedDocumento?.id,
+          sucursal: _selectedSucursal,
         );
 
         if (!mounted) return;
@@ -16166,7 +17442,13 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         unawaited(_loadEmployeeDailySummary(employee: employee));
       }
 
-      _showMessage('Registros guardados: $savedCount.', isError: false);
+      final docNum = _selectedDocumento?.numero;
+      _showMessage(
+        docNum != null
+            ? 'Registros guardados: $savedCount. Doc #$docNum'
+            : 'Registros guardados: $savedCount.',
+        isError: false,
+      );
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -16448,6 +17730,8 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                 color: palette.errorText,
               ),
             ],
+            const SizedBox(height: 10),
+            _buildSucursalAndDocumentsSection(palette),
           ],
         ),
       ),
@@ -16545,9 +17829,718 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                 color: palette.errorText,
               ),
             ],
+            const SizedBox(height: 6),
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _saving ? null : () => _showDocumentPickerSheet(palette),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: _selectedDocumento != null
+                      ? palette.primary.withValues(alpha: 0.1)
+                      : palette.surfaceSoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _selectedDocumento != null
+                        ? palette.primary.withValues(alpha: 0.35)
+                        : palette.border.withValues(alpha: 0.5),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Builder(
+                      builder: (context) {
+                        final selColor = _selectedDocumento != null
+                            ? _getDocumentoColor(_selectedDocumento!)
+                            : palette.muted;
+                        return Icon(
+                          _selectedDocumento != null
+                              ? Icons.description_rounded
+                              : Icons.post_add_rounded,
+                          size: 18,
+                          color: _selectedDocumento != null ? selColor : palette.muted,
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              if (_selectedDocumento != null) ...[
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: _getDocumentoColor(_selectedDocumento!),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                              ],
+                              Expanded(
+                                child: Text(
+                                  _selectedDocumento != null
+                                      ? 'Doc. #${_selectedDocumento!.numero}'
+                                      : 'Sin documento ERP (Opcional)',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.8,
+                                    fontWeight: FontWeight.w800,
+                                    color: _selectedDocumento != null
+                                        ? palette.text
+                                        : palette.muted,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Text(
+                            _selectedDocumento != null
+                                ? ((_selectedDocumento!.observaciones != null && _selectedDocumento!.observaciones!.trim().isNotEmpty)
+                                    ? _selectedDocumento!.observaciones!.trim()
+                                    : (_selectedDocumento!.descripcion ?? 'Empaque'))
+                                : 'Toca para vincular a un documento de empaque ERP',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.2,
+                              fontWeight: FontWeight.w600,
+                              color: palette.muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    if (_selectedDocumento != null)
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedDocumento = null;
+                            _scanError = null;
+                          });
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(4.0),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 16,
+                            color: palette.muted,
+                          ),
+                        ),
+                      )
+                    else
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                        color: palette.muted,
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildSucursalAndDocumentsSection(AppPalette palette) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.store_mall_directory_rounded, size: 16, color: palette.primary),
+            const SizedBox(width: 6),
+            Text(
+              'Sucursal ERP:',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: palette.text,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: palette.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: palette.primary.withValues(alpha: 0.3)),
+              ),
+              child: Text(
+                'Sucursal $_selectedSucursal',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w900,
+                  color: palette.primary,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Icon(Icons.description_rounded, size: 16, color: palette.primary),
+            const SizedBox(width: 6),
+            Text(
+              'Documentos ERP (${_documentos.length})',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                color: palette.text,
+              ),
+            ),
+            if (_loadingDocumentos) ...[
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: palette.primary,
+                ),
+              ),
+            ],
+            if (_selectedDocumento != null) ...[
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                ),
+                icon: const Icon(Icons.close_rounded, size: 14),
+                label: const Text('Desmarcar', style: TextStyle(fontSize: 11)),
+                onPressed: () {
+                  setState(() {
+                    _selectedDocumento = null;
+                    _scanError = null;
+                  });
+                },
+              ),
+              const SizedBox(width: 4),
+            ],
+            const Spacer(),
+            IconButton(
+              tooltip: 'Actualizar documentos',
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              onPressed: _loadingDocumentos ? null : _loadDocumentos,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        if (_documentosError != null)
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: palette.errorBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.errorBorder),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline_rounded, size: 18, color: palette.errorText),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _documentosError!,
+                    style: TextStyle(fontSize: 11.5, color: palette.errorText),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _loadDocumentos,
+                  child: const Text('Reintentar', style: TextStyle(fontSize: 11)),
+                ),
+              ],
+            ),
+          )
+        else if (_loadingDocumentos && _documentos.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: palette.surfaceSoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: palette.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Cargando documentos...',
+                    style: TextStyle(fontSize: 12, color: palette.muted),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else if (_documentos.isEmpty)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            decoration: BoxDecoration(
+              color: palette.surfaceSoft,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: palette.border.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.inbox_rounded, size: 20, color: palette.muted),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'No hay documentos de empaque para esta fecha y sucursal.',
+                    style: TextStyle(fontSize: 11.5, color: palette.muted),
+                  ),
+                ),
+              ],
+            ),
+          )
+        else
+          Column(
+            children: _documentos.map((doc) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: _buildDocumentCard(
+                  palette,
+                  doc,
+                  onTap: () {
+                    setState(() {
+                      if (_selectedDocumento?.numero == doc.numero) {
+                        _selectedDocumento = null;
+                      } else {
+                        _selectedDocumento = doc;
+                      }
+                      _scanError = null;
+                    });
+                  },
+                ),
+              );
+            }).toList(growable: false),
+          ),
+      ],
+    );
+  }
+
+  Color _getDocumentoColor(DocumentoEmpaqueInfo doc) {
+    final text = '${doc.descripcion ?? ""} ${doc.observaciones ?? ""}'.toLowerCase();
+
+    // 1. Crew names in parentheses or explicit plural/singular
+    if (text.contains('anilladoras') || text.contains('anilladora')) {
+      return const Color(0xFF2563EB); // Vibrant Blue
+    }
+    if (text.contains('rezagadoras') || text.contains('rezagadora')) {
+      return const Color(0xFFF59E0B); // Amber / Orange
+    }
+    if (text.contains('llenadoras') || text.contains('llenadora')) {
+      return const Color(0xFF10B981); // Emerald / Green
+    }
+    if (text.contains('limpiadoras') || text.contains('limpiadora') || text.contains('(limpieza)')) {
+      return const Color(0xFF8B5CF6); // Purple / Violet
+    }
+    if (text.contains('prensadoras') || text.contains('prensadora') || text.contains('(prensa)')) {
+      return const Color(0xFFEF4444); // Red / Coral
+    }
+    if (text.contains('rolado') || text.contains('rolera') || text.contains('rolador')) {
+      return const Color(0xFF0D9488); // Teal
+    }
+    if (text.contains('indirectos') || text.contains('indirecto')) {
+      return const Color(0xFFEC4899); // Pink / Fuchsia
+    }
+
+    // 2. Action verbs / root words fallback
+    if (text.contains('limpieza') || text.contains('limpi')) {
+      return const Color(0xFF8B5CF6);
+    }
+    if (text.contains('prensa') || text.contains('prens')) {
+      return const Color(0xFFEF4444);
+    }
+    if (text.contains('rola')) {
+      return const Color(0xFF0D9488);
+    }
+    if (text.contains('rezag')) {
+      return const Color(0xFFF59E0B);
+    }
+    if (text.contains('llenad') || text.contains('empacad')) {
+      return const Color(0xFF10B981);
+    }
+    if (text.contains('anillad') || text.contains('anillo')) {
+      return const Color(0xFF2563EB);
+    }
+
+    return const Color(0xFF64748B); // Slate
+  }
+
+  Widget _buildDocumentCard(
+    AppPalette palette,
+    DocumentoEmpaqueInfo doc, {
+    required VoidCallback onTap,
+  }) {
+    final isSelected = _selectedDocumento?.numero == doc.numero;
+    final docColor = _getDocumentoColor(doc);
+
+    final hasObs = doc.observaciones != null && doc.observaciones!.trim().isNotEmpty;
+    final hasDesc = doc.descripcion != null && doc.descripcion!.trim().isNotEmpty;
+    final mainDescription = hasObs ? doc.observaciones!.trim() : (hasDesc ? doc.descripcion!.trim() : '');
+    final secondaryDescription = (hasObs && hasDesc && doc.descripcion!.trim().toLowerCase() != doc.observaciones!.trim().toLowerCase())
+        ? doc.descripcion!.trim()
+        : null;
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isSelected ? palette.primary : palette.border.withValues(alpha: 0.4),
+          width: isSelected ? 1.8 : 1.0,
+        ),
+      ),
+      color: isSelected
+          ? palette.primary.withValues(alpha: 0.12)
+          : palette.surfaceSoft,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? palette.primary
+                          : docColor.withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: docColor.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.description_rounded,
+                      size: 16,
+                      color: isSelected ? palette.onPrimary : docColor,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: docColor,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: docColor.withValues(alpha: 0.5),
+                                blurRadius: 4,
+                                spreadRadius: 0.5,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(
+                          'Doc. #${doc.numero}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: isSelected ? palette.primary : palette.text,
+                          ),
+                        ),
+                        if (secondaryDescription != null) ...[
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '· $secondaryDescription',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: palette.muted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    isSelected
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: isSelected ? palette.primary : palette.muted,
+                    size: 20,
+                  ),
+                ],
+              ),
+              if (mainDescription.isNotEmpty) ...[
+                const SizedBox(height: 7),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: palette.surface.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: docColor.withValues(alpha: 0.2),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    mainDescription,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: palette.text,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDocumentPickerSheet(AppPalette palette) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: palette.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.description_rounded, color: palette.primary, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Documentos de Empaque ERP',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: palette.text,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Icon(Icons.store_mall_directory_rounded, size: 14, color: palette.muted),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Sucursal activa: ',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: palette.muted,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: palette.surfaceSoft,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: palette.border),
+                          ),
+                          child: Text(
+                            'Sucursal $_selectedSucursal',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: palette.text,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Card(
+                        elevation: 0,
+                        margin: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(
+                            color: _selectedDocumento == null
+                                ? palette.primary
+                                : palette.border.withValues(alpha: 0.4),
+                            width: _selectedDocumento == null ? 1.8 : 1.0,
+                          ),
+                        ),
+                        color: _selectedDocumento == null
+                            ? palette.primary.withValues(alpha: 0.12)
+                            : palette.surfaceSoft,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            setState(() {
+                              _selectedDocumento = null;
+                              _scanError = null;
+                            });
+                            Navigator.of(sheetContext).pop();
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(10),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 30,
+                                  height: 30,
+                                  decoration: BoxDecoration(
+                                    color: _selectedDocumento == null
+                                        ? palette.primary
+                                        : palette.surface,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Icon(
+                                    Icons.link_off_rounded,
+                                    size: 16,
+                                    color: _selectedDocumento == null
+                                        ? palette.onPrimary
+                                        : palette.muted,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Sin documento ERP',
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w800,
+                                          color: _selectedDocumento == null
+                                              ? palette.primary
+                                              : palette.text,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Guardar localmente sin vincular ni subir al ERP',
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          color: palette.muted,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Icon(
+                                  _selectedDocumento == null
+                                      ? Icons.check_circle_rounded
+                                      : Icons.radio_button_unchecked_rounded,
+                                  color: _selectedDocumento == null
+                                      ? palette.primary
+                                      : palette.muted,
+                                  size: 20,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(sheetContext).size.height * 0.5,
+                      ),
+                      child: _loadingDocumentos
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: CircularProgressIndicator(color: palette.primary),
+                              ),
+                            )
+                          : _documentos.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(24),
+                                    child: Text(
+                                      'No hay documentos para esta fecha y sucursal.',
+                                      style: TextStyle(color: palette.muted),
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  shrinkWrap: true,
+                                  itemCount: _documentos.length,
+                                  itemBuilder: (context, index) {
+                                    final doc = _documentos[index];
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: _buildDocumentCard(
+                                        palette,
+                                        doc,
+                                        onTap: () {
+                                          setState(() {
+                                            if (_selectedDocumento?.numero == doc.numero) {
+                                              _selectedDocumento = null;
+                                            } else {
+                                              _selectedDocumento = doc;
+                                            }
+                                            _scanError = null;
+                                          });
+                                          Navigator.of(sheetContext).pop();
+                                        },
+                                      ),
+                                    );
+                                  },
+                                ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -16972,6 +18965,24 @@ class _MultiVinetaEntry {
   }
 
   String get shortLabel {
+    if (registro != null) {
+      final cod = registro!.codigoVineta?.trim();
+      if (cod != null && cod.isNotEmpty) {
+        final lower = cod.toLowerCase();
+        if (lower.startsWith('l-') ||
+            lower.startsWith('p-') ||
+            lower.startsWith('r-') ||
+            lower.startsWith('o-') ||
+            lower.startsWith('or-')) {
+          return 'ID $cod';
+        }
+        return cod;
+      }
+      if (registro!.vinetaApiId != null) {
+        return 'ID ${registro!.vinetaApiId}';
+      }
+    }
+
     if (vineta.apiId != null) {
       return 'ID ${vineta.apiId}';
     }
@@ -17336,18 +19347,20 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
   void _applyRememberedRegistro() {
     final remembered = _rememberedVinetaRegistro;
 
-    if (remembered == null) {
-      _quantityController.clear();
-      return;
+    if (remembered != null) {
+      _taskMode = remembered.taskMode;
+      _employee = remembered.employee;
+      _employeeCodeController.text = remembered.employee.codigo;
+      _minutesController.text = remembered.taskMode
+          ? (remembered.minutosTrabajados?.toString() ?? '')
+          : '';
     }
 
-    _taskMode = remembered.taskMode;
-    _employee = remembered.employee;
-    _employeeCodeController.text = remembered.employee.codigo;
-    _quantityController.text = remembered.cantidadPuros.toString();
-    _minutesController.text = remembered.taskMode
-        ? (remembered.minutosTrabajados?.toString() ?? '')
-        : '';
+    if (widget.vineta.cantidadPuros != null && widget.vineta.cantidadPuros! > 0) {
+      _quantityController.text = widget.vineta.cantidadPuros!.toString();
+    } else {
+      _quantityController.clear();
+    }
   }
 
   Future<void> _loadActivities() async {
@@ -17374,6 +19387,10 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
           );
         }
       });
+
+      if (_employee != null && _isLimpiaPurosEmployee(_employee!)) {
+        unawaited(_ensureLimpiezaActivityForEmployee(_employee!));
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
 
@@ -17392,6 +19409,63 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
           _loadingActivities = false;
         });
       }
+    }
+  }
+
+  Future<void> _ensureLimpiezaActivityForEmployee(EmployeeInfo employee) async {
+    if (!mounted || !_isLimpiaPurosEmployee(employee)) return;
+
+    final existing = _findLimpiezaActivity(_activities);
+    if (existing != null) {
+      if (mounted && _selectedActivity != existing) {
+        setState(() {
+          _selectedActivity = existing;
+        });
+      }
+      return;
+    }
+
+    try {
+      final results = await widget.authApi.searchActivities(
+        widget.token,
+        query: 'Limpieza de puros',
+        generalCatalog: true,
+      );
+
+      if (!mounted || _employee?.id != employee.id) return;
+
+      final match = _findLimpiezaActivity(results) ??
+          results.firstOrNull ??
+          const ActivityInfo(
+            codigoActividad: '103',
+            nombre: 'Limpieza de Puros',
+          );
+
+      setState(() {
+        final alreadyHas = _activities.any((a) =>
+            a.id == match.id ||
+            a.codigoActividad == match.codigoActividad ||
+            (a.nombre != null &&
+                match.nombre != null &&
+                _normalizeForMatch(a.nombre!) ==
+                    _normalizeForMatch(match.nombre!)));
+        if (!alreadyHas) {
+          _activities = [..._activities, match];
+        }
+        _selectedActivity = match;
+      });
+    } catch (_) {
+      if (!mounted || _employee?.id != employee.id) return;
+      const fallback = ActivityInfo(
+        codigoActividad: '103',
+        nombre: 'Limpieza de Puros',
+      );
+      setState(() {
+        if (!_activities.any((a) => a.codigoActividad == '103')) {
+          _activities = [..._activities, fallback];
+        }
+        _selectedActivity = fallback;
+      });
     }
   }
 
@@ -17426,6 +19500,10 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
         _employeeCodeController.text = employee.codigo;
         _selectedActivity = _activityForEmployee(employee, _activities);
       });
+
+      if (_isLimpiaPurosEmployee(employee)) {
+        unawaited(_ensureLimpiezaActivityForEmployee(employee));
+      }
 
       unawaited(_loadEmployeeDailySummary(employee: employee));
     } on ApiException catch (error) {
@@ -17467,6 +19545,10 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       _employeeCodeController.text = employee.codigo;
       _selectedActivity = _activityForEmployee(employee, _activities);
     });
+
+    if (_isLimpiaPurosEmployee(employee)) {
+      unawaited(_ensureLimpiezaActivityForEmployee(employee));
+    }
 
     unawaited(_loadEmployeeDailySummary(employee: employee));
   }
@@ -17618,6 +19700,10 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
         _employeeCodeController.text = employee.codigo;
         _selectedActivity = _activityForEmployee(employee, _activities);
       });
+
+      if (_isLimpiaPurosEmployee(employee)) {
+        unawaited(_ensureLimpiezaActivityForEmployee(employee));
+      }
 
       unawaited(_loadEmployeeDailySummary(employee: employee));
 
@@ -19593,11 +21679,7 @@ class AuthApi {
       'Authorization': 'Bearer $token',
     });
     request.files.add(
-      http.MultipartFile.fromBytes(
-        'photo',
-        imageBytes,
-        filename: fileName,
-      ),
+      http.MultipartFile.fromBytes('photo', imageBytes, filename: fileName),
     );
 
     final streamedResponse = await request.send();
@@ -19698,6 +21780,9 @@ class AuthApi {
     required DateTime registradoEn,
     required bool taskMode,
     ProductInfo? product,
+    String? documentoNumero,
+    int? documentoEmpaqueId,
+    int? sucursal,
   }) async {
     final payload = <String, dynamic>{
       'modo_registro': taskMode ? 'por_tarea' : 'por_hora',
@@ -19709,6 +21794,16 @@ class AuthApi {
       'fecha_registro': formatApiDate(registradoEn),
       'hora_registro': formatApiTime(registradoEn),
     };
+
+    if (documentoNumero != null && documentoNumero.isNotEmpty) {
+      payload['documento_numero'] = documentoNumero;
+    }
+    if (documentoEmpaqueId != null) {
+      payload['documento_empaque_id'] = documentoEmpaqueId;
+    }
+    if (sucursal != null) {
+      payload['sucursal'] = sucursal;
+    }
 
     if (activity != null) {
       payload.addAll({
@@ -19741,14 +21836,51 @@ class AuthApi {
     return VinetaRegistroInfo.fromResponse(body);
   }
 
+  Future<List<DocumentoEmpaqueInfo>> getDocumentosEmpaques(
+    String token, {
+    required DateTime fecha,
+    required int sucursal,
+  }) async {
+    final response = await _client.get(
+      apiUri('documentos-empaques').replace(
+        queryParameters: {
+          'fecha': formatApiDate(fecha),
+          'sucursal': sucursal.toString(),
+        },
+      ),
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    if (body['documentos'] is List) {
+      final list = body['documentos'] as List;
+      return list
+          .whereType<Map<String, dynamic>>()
+          .map(DocumentoEmpaqueInfo.fromJson)
+          .toList(growable: false);
+    }
+
+    return const <DocumentoEmpaqueInfo>[];
+  }
+
   Future<DailyVinetaRecordsResult> dailyVinetaRegistros(
     String token, {
     required DateTime date,
+    int? sucursal,
   }) async {
+    final queryParams = <String, String>{'fecha': formatApiDate(date)};
+    if (sucursal != null && sucursal > 0) {
+      queryParams['sucursal'] = sucursal.toString();
+    }
     final response = await _client.get(
       apiUri(
         'vineta-registros',
-      ).replace(queryParameters: {'fecha': formatApiDate(date)}),
+      ).replace(queryParameters: queryParams),
       headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
     );
 
@@ -19897,11 +22029,19 @@ class AuthApi {
   Future<EmployeeHoursOverviewResult> employeeHoursOverview(
     String token, {
     required DateTime date,
+    int? sucursal,
   }) async {
+    final queryParams = <String, String>{
+      'fecha': formatApiDate(date),
+      'incluir_hora': '1',
+    };
+    if (sucursal != null && sucursal > 0) {
+      queryParams['sucursal'] = sucursal.toString();
+    }
     final response = await _client.get(
       apiUri(
         'empleados/horas-ordinarias/resumen',
-      ).replace(queryParameters: {'fecha': formatApiDate(date)}),
+      ).replace(queryParameters: queryParams),
       headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
     );
 
@@ -19916,10 +22056,18 @@ class AuthApi {
     required int employeeId,
     required DateTime date,
     required String group,
+    int? sucursal,
   }) async {
+    final queryParams = <String, String>{
+      'fecha': formatApiDate(date),
+      'grupo': group,
+    };
+    if (sucursal != null && sucursal > 0) {
+      queryParams['sucursal'] = sucursal.toString();
+    }
     final response = await _client.get(
       apiUri('empleados/$employeeId/horas-ordinarias').replace(
-        queryParameters: {'fecha': formatApiDate(date), 'grupo': group},
+        queryParameters: queryParams,
       ),
       headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
     );
@@ -19936,7 +22084,16 @@ class AuthApi {
     required DateTime date,
     required int minutes,
     required String observation,
+    int? sucursal,
   }) async {
+    final payload = <String, dynamic>{
+      'fecha': formatApiDate(date),
+      'minutos': minutes,
+      'observacion': observation,
+    };
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
     final response = await _client.post(
       apiUri('empleados/$employeeId/horas-ordinarias'),
       headers: {
@@ -19944,11 +22101,7 @@ class AuthApi {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({
-        'fecha': formatApiDate(date),
-        'minutos': minutes,
-        'observacion': observation,
-      }),
+      body: jsonEncode(payload),
     );
 
     final body = _decodeResponse(response);
@@ -20013,7 +22166,16 @@ class AuthApi {
     required DateTime date,
     required String group,
     required int minutes,
+    int? sucursal,
   }) async {
+    final payload = <String, dynamic>{
+      'fecha': formatApiDate(date),
+      'grupo': group,
+      'minutos': minutes,
+    };
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
     final response = await _client.post(
       apiUri('empleados/$employeeId/jornada-laboral'),
       headers: {
@@ -20021,11 +22183,7 @@ class AuthApi {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
-      body: jsonEncode({
-        'fecha': formatApiDate(date),
-        'grupo': group,
-        'minutos': minutes,
-      }),
+      body: jsonEncode(payload),
     );
 
     final body = _decodeResponse(response);
@@ -20045,6 +22203,37 @@ class AuthApi {
         queryParameters: {'fecha': formatApiDate(date), 'grupo': group},
       ),
       headers: {'Accept': 'application/json', 'Authorization': 'Bearer $token'},
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+  }
+
+  Future<void> addGlobalOrdinaryHour(
+    String token, {
+    required DateTime date,
+    required String group,
+    required int minutes,
+    required String observation,
+    int? sucursal,
+  }) async {
+    final payload = <String, dynamic>{
+      'fecha': formatApiDate(date),
+      'grupo': group,
+      'minutos': minutes,
+      'observacion': observation,
+    };
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
+    final response = await _client.post(
+      apiUri('empleados/horas-ordinarias/global'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(payload),
     );
 
     final body = _decodeResponse(response);
@@ -20352,6 +22541,32 @@ class VinetaActivitiesResult {
   }
 }
 
+class DocumentoEmpaqueInfo {
+  const DocumentoEmpaqueInfo({
+    required this.numero,
+    this.descripcion,
+    this.observaciones,
+    this.total,
+    this.id,
+  });
+
+  final String numero;
+  final String? descripcion;
+  final String? observaciones;
+  final int? total;
+  final int? id;
+
+  factory DocumentoEmpaqueInfo.fromJson(Map<String, dynamic> json) {
+    return DocumentoEmpaqueInfo(
+      numero: _nullableString(json['numero']) ?? '',
+      descripcion: _nullableString(json['descripcion']),
+      observaciones: _nullableString(json['observaciones']),
+      total: _nullableInt(json['total']),
+      id: _nullableInt(json['id']),
+    );
+  }
+}
+
 class ProductInfo {
   const ProductInfo({
     this.id,
@@ -20415,7 +22630,8 @@ class ActivityInfo {
       [nombre, tipoEmpaque, codigoActividad].whereType<String>().join(' '),
     );
 
-    if (_matchesRezagoActivityText(name) || _matchesRezagoActivityText(fullText)) {
+    if (_matchesRezagoActivityText(name) ||
+        _matchesRezagoActivityText(fullText)) {
       return VinetaProcessGroup.rezago;
     }
 
@@ -20437,7 +22653,6 @@ class ActivityInfo {
 
     return null;
   }
-
 
   String get compactMeta {
     return [
@@ -20896,6 +23111,9 @@ class DailyVinetaRegistroInfo {
     this.horaRegistro,
     this.registradoEnTexto,
     this.observacion,
+    this.documentoNumero,
+    this.documentoEmpaqueId,
+    this.sucursal,
   });
 
   final int id;
@@ -20926,6 +23144,9 @@ class DailyVinetaRegistroInfo {
   final String? registradoEnTexto;
   final String estado;
   final String? observacion;
+  final String? documentoNumero;
+  final int? documentoEmpaqueId;
+  final int? sucursal;
 
   factory DailyVinetaRegistroInfo.fromJson(Map<String, dynamic> json) {
     final producto = json['producto'];
@@ -20968,6 +23189,9 @@ class DailyVinetaRegistroInfo {
       registradoEnTexto: _nullableString(json['registrado_en_texto']),
       estado: _nullableString(json['estado']) ?? 'activo',
       observacion: _nullableString(json['observacion']),
+      documentoNumero: _nullableString(json['documento_numero']),
+      documentoEmpaqueId: _nullableInt(json['documento_empaque_id']),
+      sucursal: _nullableInt(json['sucursal']),
     );
   }
 
@@ -20990,12 +23214,25 @@ class DailyVinetaRegistroInfo {
   }
 
   String get vinetaLabel {
+    final cod = codigoVineta?.trim();
+
+    if (cod != null && cod.isNotEmpty) {
+      final lower = cod.toLowerCase();
+      if (lower.startsWith('l-') ||
+          lower.startsWith('p-') ||
+          lower.startsWith('r-') ||
+          lower.startsWith('o-') ||
+          lower.startsWith('or-')) {
+        return 'ID $cod';
+      }
+    }
+
     if (vinetaApiId != null) {
       return 'ID $vinetaApiId';
     }
 
-    if (codigoVineta != null) {
-      return codigoVineta!;
+    if (cod != null && cod.isNotEmpty) {
+      return cod;
     }
 
     return vinetaId == null ? 'Viñeta' : 'Viñeta $vinetaId';
@@ -21211,9 +23448,14 @@ class VinetaRegistroInfo {
     required this.empleadoNombre,
     required this.cantidadPuros,
     required this.minutosTrabajados,
+    this.codigoVineta,
+    this.vinetaApiId,
     this.registradoEnTexto,
     this.resumenDiario,
     this.process,
+    this.documentoNumero,
+    this.sucursal,
+    this.erpEnviado,
   });
 
   final int id;
@@ -21221,9 +23463,14 @@ class VinetaRegistroInfo {
   final String empleadoNombre;
   final int cantidadPuros;
   final int minutosTrabajados;
+  final String? codigoVineta;
+  final int? vinetaApiId;
   final String? registradoEnTexto;
   final DailyWorkSummaryInfo? resumenDiario;
   final VinetaProcessInfo? process;
+  final String? documentoNumero;
+  final int? sucursal;
+  final bool? erpEnviado;
 
   factory VinetaRegistroInfo.fromResponse(Map<String, dynamic> json) {
     final registro = json['registro'];
@@ -21265,6 +23512,8 @@ class VinetaRegistroInfo {
 
     return VinetaRegistroInfo(
       id: _nullableInt(json['id']) ?? 0,
+      codigoVineta: _nullableString(json['codigo_vineta']),
+      vinetaApiId: _nullableInt(json['vineta_api_id']),
       actividadNombre: actividad is Map<String, dynamic>
           ? _nullableString(actividad['nombre']) ?? 'Actividad'
           : 'Actividad',
@@ -21276,6 +23525,9 @@ class VinetaRegistroInfo {
       registradoEnTexto: _nullableString(json['registrado_en_texto']),
       resumenDiario: resumenDiario,
       process: process,
+      documentoNumero: _nullableString(json['documento_numero']),
+      sucursal: _nullableInt(json['sucursal']),
+      erpEnviado: json['erp_enviado'] == true,
     );
   }
 }
@@ -21338,34 +23590,46 @@ class EmployeeHoursOverviewResult {
     required this.tableAvailable,
     required this.groupCounts,
     required this.employees,
+    this.documentos = const [],
   });
 
   final String date;
   final bool tableAvailable;
   final Map<String, int> groupCounts;
   final List<EmployeeHoursOverviewItem> employees;
+  final List<DailyRecordsActivityGroupOption> documentos;
 
   factory EmployeeHoursOverviewResult.fromJson(Map<String, dynamic> json) {
     final groups = json['grupos'];
     final employees = json['empleados'];
+    final documentosRaw = json['documentos'];
+    final documentosList = <DailyRecordsActivityGroupOption>[];
+
+    if (documentosRaw is List) {
+      for (final doc in documentosRaw) {
+        if (doc is Map<String, dynamic>) {
+          final key = _nullableString(doc['key']) ?? '';
+          final label = _nullableString(doc['label']) ?? (key == 'sin_documento' ? 'Sin documento' : 'Doc. #$key');
+          if (key.isNotEmpty) {
+            documentosList.add(DailyRecordsActivityGroupOption(key: key, label: label));
+          }
+        }
+      }
+    }
 
     return EmployeeHoursOverviewResult(
       date: _nullableString(json['fecha']) ?? '',
       tableAvailable: json['tabla_disponible'] as bool? ?? false,
       groupCounts: groups is Map<String, dynamic>
-          ? {
-              'rezago': _nullableInt(groups['rezago']) ?? 0,
-              'anillado': _nullableInt(groups['anillado']) ?? 0,
-              'llenado': _nullableInt(groups['llenado']) ?? 0,
-              'limpieza': _nullableInt(groups['limpieza']) ?? 0,
-            }
-          : const {'rezago': 0, 'anillado': 0, 'llenado': 0, 'limpieza': 0},
+          ? groups.map((k, v) => MapEntry(k.toString(), _nullableInt(v) ?? 0))
+          : const {},
       employees: employees is List
           ? employees
                 .whereType<Map<String, dynamic>>()
                 .map(EmployeeHoursOverviewItem.fromJson)
                 .toList(growable: false)
           : const [],
+      documentos: documentosList,
     );
   }
 }
@@ -21375,25 +23639,32 @@ class EmployeeHoursOverviewItem {
     required this.group,
     required this.employee,
     required this.summary,
+    this.documentoNumero,
   });
 
   final String group;
   final EmployeeInfo employee;
   final EmployeeHoursSummaryInfo summary;
+  final String? documentoNumero;
 
-  String get groupLabel => switch (group) {
-    'anillado' => 'Anillado',
-    'llenado' => 'Llenado',
-    'limpieza' => 'Limpieza',
-    _ => 'Rezago',
-  };
+  String get groupLabel {
+    if (group == 'sin_documento') return 'Sin documento';
+    if (group == 'todos') return 'Todos';
+    if (group == 'anillado') return 'Anillado';
+    if (group == 'llenado') return 'Llenado';
+    if (group == 'limpieza') return 'Limpieza';
+    if (group == 'hora') return 'Por hora';
+    if (group == 'rezago') return 'Rezago';
+    return 'Doc. #$group';
+  }
 
   factory EmployeeHoursOverviewItem.fromJson(Map<String, dynamic> json) {
     final employee = json['empleado'];
     final summary = json['resumen'];
 
     return EmployeeHoursOverviewItem(
-      group: _nullableString(json['grupo']) ?? 'rezago',
+      group: _nullableString(json['grupo']) ?? 'sin_documento',
+      documentoNumero: _nullableString(json['documento_numero']),
       employee: employee is Map<String, dynamic>
           ? EmployeeInfo.fromJson(employee)
           : const EmployeeInfo(
@@ -21909,7 +24180,8 @@ class VinetaProcessStepActivityInfo {
 
   factory VinetaProcessStepActivityInfo.fromJson(Map<String, dynamic> json) {
     return VinetaProcessStepActivityInfo(
-      nombre: _nullableString(
+      nombre:
+          _nullableString(
             json['actividad_nombre'] ?? json['actividad'] ?? json['nombre'],
           ) ??
           '',
@@ -21964,9 +24236,9 @@ class VinetaProcessStepInfo {
     final rawActivities = json['actividades'];
     final activitiesList = rawActivities is List
         ? rawActivities
-            .whereType<Map<String, dynamic>>()
-            .map(VinetaProcessStepActivityInfo.fromJson)
-            .toList(growable: false)
+              .whereType<Map<String, dynamic>>()
+              .map(VinetaProcessStepActivityInfo.fromJson)
+              .toList(growable: false)
         : const <VinetaProcessStepActivityInfo>[];
 
     return VinetaProcessStepInfo(
@@ -21981,7 +24253,6 @@ class VinetaProcessStepInfo {
     );
   }
 }
-
 
 VinetaProcessGroup _processGroupFromKey(String? key) {
   return switch (key) {
