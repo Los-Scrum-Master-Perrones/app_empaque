@@ -2,14 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/cupertino.dart'
     show
-        CupertinoIcons,
         CupertinoThemeData,
         CupertinoPageTransitionsBuilder;
 import 'package:flutter/services.dart';
@@ -4556,9 +4554,11 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   String _search = '';
   int? _expandedEmployeeId;
   bool _loading = true;
+  bool _loadingDocumentos = false;
   bool _savingJornada = false;
   String? _error;
   EmployeeHoursOverviewResult? _result;
+  List<DailyRecordsActivityGroupOption> _documentosOptions = const [];
   int _globalActionTab = 0;
 
   @override
@@ -4586,52 +4586,97 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   Future<void> _load() async {
     setState(() {
       _loading = true;
+      _loadingDocumentos = true;
       _error = null;
     });
 
     try {
-      final result = await widget.authApi.employeeHoursOverview(
+      final erpDocsFuture = widget.authApi.getDocumentosEmpaques(
         widget.token,
-        date: _date,
+        fecha: _date,
         sucursal: activeSucursalNotifier.value,
-      );
+      ).catchError((_) => <DocumentoEmpaqueInfo>[]);
 
+      EmployeeHoursOverviewResult? overviewResult;
+      String? overviewError;
+
+      try {
+        overviewResult = await widget.authApi.employeeHoursOverview(
+          widget.token,
+          date: _date,
+          sucursal: activeSucursalNotifier.value,
+        );
+      } on ApiException catch (e) {
+        overviewError = e.message;
+      } catch (e) {
+        overviewError = 'No se pudo cargar el resumen de horas ordinarias.';
+      }
+
+      final erpDocs = await erpDocsFuture;
       if (!mounted) return;
 
-      setState(() {
-        _result = result;
+      final mergedDocs = <DailyRecordsActivityGroupOption>[];
+      final seenKeys = <String>{};
 
-        if (result.documentos.isNotEmpty) {
-          if (_groupKey.isEmpty || !result.documentos.any((d) => d.key == _groupKey)) {
-            _groupKey = result.documentos.first.key;
+      for (final doc in erpDocs) {
+        final key = doc.numero.trim();
+        if (key.isEmpty || seenKeys.contains(key)) continue;
+        seenKeys.add(key);
+
+        final obs = doc.observaciones?.trim() ?? '';
+        final desc = doc.descripcion?.trim() ?? '';
+        final displayText = obs.isNotEmpty ? obs : desc;
+        final count = overviewResult?.groupCounts[key] ?? 0;
+
+        mergedDocs.add(DailyRecordsActivityGroupOption(
+          key: key,
+          label: displayText.isNotEmpty ? 'Doc. #$key · $displayText' : 'Doc. #$key',
+          numero: key,
+          descripcion: doc.descripcion,
+          observaciones: doc.observaciones,
+          total: doc.total,
+          count: count,
+        ));
+      }
+
+      if (overviewResult != null) {
+        for (final doc in overviewResult.documentos) {
+          if (!seenKeys.contains(doc.key)) {
+            seenKeys.add(doc.key);
+            mergedDocs.add(doc);
           }
-        } else {
-          _groupKey = 'sin_documento';
+        }
+
+        final hasSinDoc = overviewResult.employees.any((e) =>
+          (e.documentoNumero == null || e.documentoNumero!.isEmpty) && e.group == 'sin_documento');
+        if (!seenKeys.contains('sin_documento') && hasSinDoc) {
+          mergedDocs.add(DailyRecordsActivityGroupOption(
+            key: 'sin_documento',
+            label: 'Sin documento',
+            count: overviewResult.groupCounts['sin_documento'] ?? 0,
+          ));
+        }
+      }
+
+      setState(() {
+        _result = overviewResult;
+        _documentosOptions = mergedDocs;
+        _error = overviewResult == null ? overviewError : null;
+
+        if (_groupKey.isNotEmpty && _groupKey != 'todos' && !mergedDocs.any((d) => d.key == _groupKey)) {
+          _groupKey = '';
         }
 
         if (_expandedEmployeeId != null &&
-            !result.employees.any(
-              (item) => item.employee.id == _expandedEmployeeId,
-            )) {
+            !(overviewResult?.employees.any((item) => item.employee.id == _expandedEmployeeId) ?? false)) {
           _expandedEmployeeId = null;
         }
-      });
-    } on ApiException catch (error) {
-      if (!mounted) return;
-
-      setState(() {
-        _error = error.message;
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      setState(() {
-        _error = 'No se pudo cargar el resumen de horas ordinarias.';
       });
     } finally {
       if (mounted) {
         setState(() {
           _loading = false;
+          _loadingDocumentos = false;
         });
       }
     }
@@ -4667,22 +4712,29 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   }
 
   String get _groupLabel {
-    final result = _result;
-    if (result != null) {
-      final doc = result.documentos.where((d) => d.key == _groupKey).firstOrNull;
-      if (doc != null) {
-        return doc.label;
-      }
+    if (_groupKey.isEmpty || _groupKey == 'todos') {
+      return 'todos los empleados';
+    }
+    final doc = _documentosOptions.where((d) => d.key == _groupKey).firstOrNull;
+    if (doc != null) {
+      return doc.label;
     }
     return _groupKey == 'sin_documento'
         ? 'Sin documento'
-        : (_groupKey.isNotEmpty ? 'Doc. #$_groupKey' : 'Documento');
+        : 'Doc. #$_groupKey';
   }
 
   List<EmployeeHoursOverviewItem> _groupEmployees() {
-    return (_result?.employees ?? const <EmployeeHoursOverviewItem>[])
-        .where((item) => item.group == _groupKey)
-        .toList(growable: false);
+    final all = _result?.employees ?? const <EmployeeHoursOverviewItem>[];
+    if (_groupKey.isEmpty || _groupKey == 'todos') {
+      return all;
+    }
+    return all.where((item) {
+      if (_groupKey == 'sin_documento') {
+        return item.group == 'sin_documento' || item.documentoNumero == null || item.documentoNumero!.isEmpty;
+      }
+      return item.group == _groupKey || item.documentoNumero == _groupKey;
+    }).toList(growable: false);
   }
 
   Future<void> _saveGroupWorkday() async {
@@ -4739,7 +4791,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
           widget.token,
           employeeId: item.employee.id,
           date: _date,
-          group: _groupKey,
+          group: _groupKey.isEmpty ? (item.documentoNumero ?? item.group) : _groupKey,
           minutes: totalMinutes,
           sucursal: activeSucursalNotifier.value,
         );
@@ -4833,7 +4885,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       await widget.authApi.addGlobalOrdinaryHour(
         widget.token,
         date: _date,
-        group: _groupKey,
+        group: _groupKey.isEmpty ? 'todos' : _groupKey,
         minutes: totalMinutes,
         observation: observation,
         sucursal: activeSucursalNotifier.value,
@@ -4910,7 +4962,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
     }
 
     setState(() {
-      _groupKey = item.group;
+      _groupKey = item.documentoNumero ?? item.group;
       _search = employee.codigo;
       _searchController.text = employee.codigo;
       _expandedEmployeeId = employee.id;
@@ -4918,34 +4970,211 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   }
 
   List<EmployeeHoursOverviewItem> _visibleEmployees() {
+    final base = _groupEmployees();
     final normalizedSearch = _normalizeForMatch(_search);
 
-    return (_result?.employees ?? const <EmployeeHoursOverviewItem>[])
-        .where((item) => item.group == _groupKey)
-        .where((item) {
-          if (normalizedSearch.isEmpty) {
-            return true;
-          }
+    return base.where((item) {
+      if (normalizedSearch.isEmpty) {
+        return true;
+      }
 
-          final employee = item.employee;
-          final text = _normalizeForMatch(
-            [
-              employee.codigo,
-              employee.nombre,
-              employee.cargo,
-              employee.area,
-            ].nonNulls.join(' '),
-          );
+      final employee = item.employee;
+      final text = _normalizeForMatch(
+        [
+          employee.codigo,
+          employee.nombre,
+          employee.cargo,
+          employee.area,
+        ].nonNulls.join(' '),
+      );
 
-          return text.contains(normalizedSearch);
-        })
-        .toList(growable: false);
+      return text.contains(normalizedSearch);
+    }).toList(growable: false);
+  }
+
+  Widget _buildDocumentCard(
+    AppPalette palette,
+    DailyRecordsActivityGroupOption doc, {
+    required VoidCallback onTap,
+  }) {
+    final isSelected = _groupKey == doc.key;
+    final docColor = doc.key == 'sin_documento'
+        ? const Color(0xFF64748B)
+        : getDocumentoCategoryColor(doc.descripcion, doc.observaciones);
+
+    final hasObs = doc.observaciones != null && doc.observaciones!.trim().isNotEmpty;
+    final hasDesc = doc.descripcion != null && doc.descripcion!.trim().isNotEmpty;
+    final mainDescription = hasObs ? doc.observaciones!.trim() : (hasDesc ? doc.descripcion!.trim() : '');
+    final secondaryDescription = (hasObs && hasDesc && doc.descripcion!.trim().toLowerCase() != doc.observaciones!.trim().toLowerCase())
+        ? doc.descripcion!.trim()
+        : null;
+
+    final docTitle = doc.key == 'sin_documento'
+        ? 'Sin documento'
+        : 'Doc. #${doc.numero ?? doc.key}';
+
+    final count = doc.count ?? 0;
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isSelected ? palette.primary : palette.border.withValues(alpha: 0.4),
+          width: isSelected ? 1.8 : 1.0,
+        ),
+      ),
+      color: isSelected
+          ? palette.primary.withValues(alpha: 0.12)
+          : palette.surfaceSoft,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? palette.primary
+                          : docColor.withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: docColor.withValues(alpha: 0.35),
+                        width: 1,
+                      ),
+                    ),
+                    child: Icon(
+                      doc.key == 'sin_documento' ? Icons.folder_open_rounded : Icons.description_rounded,
+                      size: 16,
+                      color: isSelected ? palette.onPrimary : docColor,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            color: docColor,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: docColor.withValues(alpha: 0.5),
+                                blurRadius: 4,
+                                spreadRadius: 0.5,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Text(
+                          docTitle,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: isSelected ? palette.primary : palette.text,
+                          ),
+                        ),
+                        const SizedBox(width: 7),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? palette.primary.withValues(alpha: 0.2)
+                                : docColor.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '$count empl.',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: isSelected ? palette.primary : docColor,
+                            ),
+                          ),
+                        ),
+                        if (doc.total != null && doc.total! > 0) ...[
+                          const SizedBox(width: 6),
+                          Text(
+                            '· ${doc.total} puros',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: palette.muted,
+                            ),
+                          ),
+                        ],
+                        if (secondaryDescription != null) ...[
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '· $secondaryDescription',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: palette.muted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(
+                    isSelected
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: isSelected ? palette.primary : palette.muted,
+                    size: 20,
+                  ),
+                ],
+              ),
+              if (mainDescription.isNotEmpty) ...[
+                const SizedBox(height: 7),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: palette.surface.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: docColor.withValues(alpha: 0.2),
+                      width: 0.8,
+                    ),
+                  ),
+                  child: Text(
+                    mainDescription,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: palette.text,
+                      height: 1.25,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
-    final result = _result;
     final employees = _visibleEmployees();
     final groupEmployees = _groupEmployees();
 
@@ -4977,29 +5206,189 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                   ),
                 ),
               ),
-              const SizedBox(height: 10),
-              EmployeeHoursFiltersCard(
-                controller: _searchController,
-                groupKey: _groupKey,
-                groupCounts: result?.groupCounts ?? const <String, int>{},
-                options: (result != null && result.documentos.isNotEmpty)
-                    ? result.documentos
-                    : const [DailyRecordsActivityGroupOption(key: 'sin_documento', label: 'Sin documento')],
-                onGroupChanged: (value) {
-                  setState(() {
-                    _groupKey = value;
-                    _expandedEmployeeId = null;
-                  });
-                  _clearJornadaForm();
-                },
-                onSearchChanged: (value) {
-                  setState(() {
-                    _search = value;
-                    _expandedEmployeeId = null;
-                  });
-                },
-                onScanEmployee: _scanEmployee,
+              const SizedBox(height: 12),
+
+              // Search and scanner
+              Card(
+                elevation: 0,
+                color: palette.surface,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: palette.border.withValues(alpha: 0.4)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: TextField(
+                    key: const ValueKey('employee-hours-search'),
+                    controller: _searchController,
+                    textInputAction: TextInputAction.search,
+                    onChanged: (value) {
+                      setState(() {
+                        _search = value;
+                        _expandedEmployeeId = null;
+                      });
+                    },
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Buscar empleado',
+                      hintText: 'Codigo o nombre',
+                      prefixIcon: const Icon(Icons.search_rounded),
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_searchController.text.trim().isNotEmpty)
+                            IconButton(
+                              tooltip: 'Limpiar busqueda',
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() {
+                                  _search = '';
+                                  _expandedEmployeeId = null;
+                                });
+                              },
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          IconButton(
+                            tooltip: 'Escanear QR empleado',
+                            onPressed: _scanEmployee,
+                            icon: const Icon(Icons.qr_code_scanner_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
+              const SizedBox(height: 12),
+
+              // Documentos ERP header
+              Row(
+                children: [
+                  Icon(Icons.description_rounded, size: 16, color: palette.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Documentos del dia (${_documentosOptions.length})',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: palette.text,
+                    ),
+                  ),
+                  if (_loadingDocumentos) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.primary,
+                      ),
+                    ),
+                  ],
+                  if (_groupKey.isNotEmpty && _groupKey != 'todos') ...[
+                    const SizedBox(width: 6),
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      ),
+                      icon: const Icon(Icons.close_rounded, size: 14),
+                      label: const Text('Ver todos', style: TextStyle(fontSize: 11)),
+                      onPressed: () {
+                        setState(() {
+                          _groupKey = '';
+                          _expandedEmployeeId = null;
+                        });
+                        _clearJornadaForm();
+                      },
+                    ),
+                  ],
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Actualizar documentos',
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 18,
+                    onPressed: _loadingDocumentos ? null : _load,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // Documentos ERP Cards list
+              if (_loadingDocumentos && _documentosOptions.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceSoft,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: palette.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Cargando documentos...',
+                          style: TextStyle(fontSize: 12, color: palette.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_documentosOptions.isEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: palette.surfaceSoft,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: palette.border.withValues(alpha: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.inbox_rounded, size: 20, color: palette.muted),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'No hay documentos de empaque para esta fecha y sucursal.',
+                          style: TextStyle(fontSize: 11.5, color: palette.muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Column(
+                  children: _documentosOptions.map((doc) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: _buildDocumentCard(
+                        palette,
+                        doc,
+                        onTap: () {
+                          setState(() {
+                            if (_groupKey == doc.key) {
+                              _groupKey = '';
+                            } else {
+                              _groupKey = doc.key;
+                            }
+                            _expandedEmployeeId = null;
+                          });
+                          _clearJornadaForm();
+                        },
+                      ),
+                    );
+                  }).toList(growable: false),
+                ),
+
               if (!_loading && _error == null && groupEmployees.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 SegmentedButton<int>(
@@ -9006,10 +9395,67 @@ class DailyRecordsActivityGroupOption {
   const DailyRecordsActivityGroupOption({
     required this.key,
     required this.label,
+    this.numero,
+    this.descripcion,
+    this.observaciones,
+    this.total,
+    this.count,
   });
 
   final String key;
   final String label;
+  final String? numero;
+  final String? descripcion;
+  final String? observaciones;
+  final int? total;
+  final int? count;
+}
+
+Color getDocumentoCategoryColor(String? descripcion, String? observaciones) {
+  final text = '${descripcion ?? ""} ${observaciones ?? ""}'.toLowerCase();
+
+  if (text.contains('anilladoras') || text.contains('anilladora')) {
+    return const Color(0xFF2563EB);
+  }
+  if (text.contains('rezagadoras') || text.contains('rezagadora')) {
+    return const Color(0xFFF59E0B);
+  }
+  if (text.contains('llenadoras') || text.contains('llenadora')) {
+    return const Color(0xFF10B981);
+  }
+  if (text.contains('limpiadoras') || text.contains('limpiadora') || text.contains('(limpieza)')) {
+    return const Color(0xFF8B5CF6);
+  }
+  if (text.contains('prensadoras') || text.contains('prensadora') || text.contains('(prensa)')) {
+    return const Color(0xFFEF4444);
+  }
+  if (text.contains('rolado') || text.contains('rolera') || text.contains('rolador')) {
+    return const Color(0xFF0D9488);
+  }
+  if (text.contains('indirectos') || text.contains('indirecto')) {
+    return const Color(0xFFEC4899);
+  }
+
+  if (text.contains('limpieza') || text.contains('limpi')) {
+    return const Color(0xFF8B5CF6);
+  }
+  if (text.contains('prensa') || text.contains('prens')) {
+    return const Color(0xFFEF4444);
+  }
+  if (text.contains('rola')) {
+    return const Color(0xFF0D9488);
+  }
+  if (text.contains('rezag')) {
+    return const Color(0xFFF59E0B);
+  }
+  if (text.contains('llenad') || text.contains('empacad')) {
+    return const Color(0xFF10B981);
+  }
+  if (text.contains('anillad') || text.contains('anillo')) {
+    return const Color(0xFF2563EB);
+  }
+
+  return const Color(0xFF64748B);
 }
 
 const dailyRecordsActivityGroups = [
@@ -18137,54 +18583,8 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     );
   }
 
-  Color _getDocumentoColor(DocumentoEmpaqueInfo doc) {
-    final text = '${doc.descripcion ?? ""} ${doc.observaciones ?? ""}'.toLowerCase();
-
-    // 1. Crew names in parentheses or explicit plural/singular
-    if (text.contains('anilladoras') || text.contains('anilladora')) {
-      return const Color(0xFF2563EB); // Vibrant Blue
-    }
-    if (text.contains('rezagadoras') || text.contains('rezagadora')) {
-      return const Color(0xFFF59E0B); // Amber / Orange
-    }
-    if (text.contains('llenadoras') || text.contains('llenadora')) {
-      return const Color(0xFF10B981); // Emerald / Green
-    }
-    if (text.contains('limpiadoras') || text.contains('limpiadora') || text.contains('(limpieza)')) {
-      return const Color(0xFF8B5CF6); // Purple / Violet
-    }
-    if (text.contains('prensadoras') || text.contains('prensadora') || text.contains('(prensa)')) {
-      return const Color(0xFFEF4444); // Red / Coral
-    }
-    if (text.contains('rolado') || text.contains('rolera') || text.contains('rolador')) {
-      return const Color(0xFF0D9488); // Teal
-    }
-    if (text.contains('indirectos') || text.contains('indirecto')) {
-      return const Color(0xFFEC4899); // Pink / Fuchsia
-    }
-
-    // 2. Action verbs / root words fallback
-    if (text.contains('limpieza') || text.contains('limpi')) {
-      return const Color(0xFF8B5CF6);
-    }
-    if (text.contains('prensa') || text.contains('prens')) {
-      return const Color(0xFFEF4444);
-    }
-    if (text.contains('rola')) {
-      return const Color(0xFF0D9488);
-    }
-    if (text.contains('rezag')) {
-      return const Color(0xFFF59E0B);
-    }
-    if (text.contains('llenad') || text.contains('empacad')) {
-      return const Color(0xFF10B981);
-    }
-    if (text.contains('anillad') || text.contains('anillo')) {
-      return const Color(0xFF2563EB);
-    }
-
-    return const Color(0xFF64748B); // Slate
-  }
+  Color _getDocumentoColor(DocumentoEmpaqueInfo doc) =>
+      getDocumentoCategoryColor(doc.descripcion, doc.observaciones);
 
   Widget _buildDocumentCard(
     AppPalette palette,
@@ -23611,7 +24011,15 @@ class EmployeeHoursOverviewResult {
           final key = _nullableString(doc['key']) ?? '';
           final label = _nullableString(doc['label']) ?? (key == 'sin_documento' ? 'Sin documento' : 'Doc. #$key');
           if (key.isNotEmpty) {
-            documentosList.add(DailyRecordsActivityGroupOption(key: key, label: label));
+            documentosList.add(DailyRecordsActivityGroupOption(
+              key: key,
+              label: label,
+              numero: _nullableString(doc['numero']),
+              descripcion: _nullableString(doc['descripcion']),
+              observaciones: _nullableString(doc['observaciones']),
+              total: _nullableInt(doc['total']),
+              count: _nullableInt(doc['count']),
+            ));
           }
         }
       }
