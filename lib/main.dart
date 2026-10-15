@@ -23185,6 +23185,15 @@ class ActivityInfo {
   final String? productoNombre;
 
   VinetaProcessGroup? get processGroup {
+    // Prensado (codigo 1) y Rolado Empaque (codigo 171) son grupos especiales:
+    // no forman parte del proceso rezago -> anillado -> llenado, asi que no se
+    // validan contra los pasos ya registrados de la viñeta.
+    final codigoExacto = codigoActividad?.trim() ?? '';
+
+    if (codigoExacto == '1' || codigoExacto == '171') {
+      return null;
+    }
+
     final name = _normalizeForMatch(nombre ?? '');
     final fullText = _normalizeForMatch(
       [nombre, tipoEmpaque, codigoActividad].whereType<String>().join(' '),
