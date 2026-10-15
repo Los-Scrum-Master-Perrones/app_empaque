@@ -20,8 +20,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '2.0.0';
-const appBuildNumber = 41;
+const appVersionName = '2.0.2';
+const appBuildNumber = 45;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -4901,6 +4901,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
             minutes: totalMinutes,
             observation: observation,
             sucursal: activeSucursalNotifier.value,
+            documentoNumero: item.documentoNumero,
           );
           updatedEmployees++;
         } catch (_) {
@@ -5488,6 +5489,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                             token: widget.token,
                             employee: item.employee,
                             group: item.group,
+                            documentoNumero: item.documentoNumero,
                             initialDate: _date,
                             embedded: true,
                             onChanged: _load,
@@ -7352,6 +7354,7 @@ class EmployeeHoursPage extends StatefulWidget {
     required this.token,
     required this.employee,
     required this.group,
+    this.documentoNumero,
     this.initialDate,
     this.embedded = false,
     this.onChanged,
@@ -7362,6 +7365,7 @@ class EmployeeHoursPage extends StatefulWidget {
   final String token;
   final EmployeeInfo employee;
   final String group;
+  final String? documentoNumero;
   final DateTime? initialDate;
   final bool embedded;
   final Future<void> Function()? onChanged;
@@ -7565,6 +7569,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
           minutes: totalMinutes,
           observation: observation,
           sucursal: activeSucursalNotifier.value,
+          documentoNumero: widget.documentoNumero,
         );
       } else {
         await widget.authApi.updateEmployeeOrdinaryHour(
@@ -13805,6 +13810,60 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
             ),
           ),
         ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 0,
+          color: palette.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide.none,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: palette.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.info_outline_rounded,
+                    color: palette.primary,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Versión de la aplicación',
+                        style: TextStyle(
+                          color: palette.text,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'v$appVersionName (Build $appBuildNumber)',
+                        style: TextStyle(
+                          color: palette.muted,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -16787,15 +16846,84 @@ int? _parseHoursToMinutes(String value) {
   return (hours * 60).round();
 }
 
-List<int> _splitMinutesAcrossVinetas(int totalMinutes, int count) {
-  final base = totalMinutes ~/ count;
-  final remainder = totalMinutes % count;
+/// Reparte [totalMinutes] entre las viñetas proporcionalmente a sus puros.
+///
+/// Trabaja en cuartos de hora (15 min): todos los valores quedan en multiplos
+/// de 0.25 h (0.25, 0.5, 0.75, 1, 1.25, 1.5, ...). El minimo es 1 cuarto
+/// (0.25 h); la diferencia se resta a la viñeta con mas cuartos, de modo que
+/// la suma total no cambie.
+List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
+  final count = puros.length;
 
-  return List<int>.generate(
-    count,
-    (index) => base + (index < remainder ? 1 : 0),
-    growable: false,
+  if (count == 0) {
+    return const [];
+  }
+
+  var totalQ = (totalMinutes / 15).round();
+  const minimo = 1; // 0.25 h
+
+  // Cada viñeta debe tener al menos 1 cuarto (0.25 h): si el total no
+  // alcanza, se sube el total a la cantidad de viñetas.
+  if (totalQ < count) {
+    totalQ = count;
+  }
+  final totalPuros = puros.fold<int>(
+    0,
+    (acc, value) => acc + (value > 0 ? value : 0),
   );
+
+  final cuartos = List<int>.filled(count, 0);
+  final rems = List<double>.filled(count, 0);
+  var asignado = 0;
+
+  for (var i = 0; i < count; i++) {
+    final exact = totalPuros > 0
+        ? (puros[i] / totalPuros) * totalQ
+        : totalQ / count;
+    final floor = exact.floor();
+    cuartos[i] = floor;
+    rems[i] = exact - floor;
+    asignado += floor;
+  }
+
+  var sobra = totalQ - asignado;
+  final orden = List<int>.generate(count, (i) => i)
+    ..sort((a, b) {
+      final cmp = rems[b].compareTo(rems[a]);
+      return cmp != 0 ? cmp : a.compareTo(b);
+    });
+
+  for (final i in orden) {
+    if (sobra <= 0) {
+      break;
+    }
+    cuartos[i]++;
+    sobra--;
+  }
+
+  var ajuste = 0;
+  for (var i = 0; i < count; i++) {
+    if (cuartos[i] < minimo) {
+      ajuste += minimo - cuartos[i];
+      cuartos[i] = minimo;
+    }
+  }
+
+  if (ajuste > 0) {
+    var maxIdx = 0;
+    var maxVal = -1;
+    for (var i = 0; i < count; i++) {
+      if (cuartos[i] > maxVal) {
+        maxVal = cuartos[i];
+        maxIdx = i;
+      }
+    }
+    if (maxVal - ajuste >= minimo) {
+      cuartos[maxIdx] -= ajuste;
+    }
+  }
+
+  return cuartos.map((q) => q * 15).toList(growable: false);
 }
 
 class MultiVinetaScanPage extends StatefulWidget {
@@ -17568,9 +17696,13 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         _taskMode &&
             totalMinutes != null &&
             totalMinutes > 0 &&
-            pendingEntries.isNotEmpty &&
-            totalMinutes >= pendingEntries.length
-        ? _splitMinutesAcrossVinetas(totalMinutes, pendingEntries.length)
+            pendingEntries.isNotEmpty
+        ? _splitMinutesByPuros(
+            totalMinutes,
+            pendingEntries
+                .map((e) => int.tryParse(e.cantidadText.trim()) ?? 0)
+                .toList(growable: false),
+          )
         : const <int>[];
 
     for (final entry in _entries) {
@@ -17807,7 +17939,12 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     }
 
     final splitMinutes = taskMode && totalMinutes > 0
-        ? _splitMinutesAcrossVinetas(totalMinutes, pendingEntries.length)
+        ? _splitMinutesByPuros(
+            totalMinutes,
+            pendingEntries
+                .map((e) => int.tryParse(e.cantidadText.trim()) ?? 0)
+                .toList(growable: false),
+          )
         : const <int>[];
     final minutesByEntry = List<int?>.generate(
       pendingEntries.length,
@@ -22485,6 +22622,8 @@ class AuthApi {
     required int minutes,
     required String observation,
     int? sucursal,
+    String? documentoNumero,
+    int? documentoEmpaqueId,
   }) async {
     final payload = <String, dynamic>{
       'fecha': formatApiDate(date),
@@ -22493,6 +22632,12 @@ class AuthApi {
     };
     if (sucursal != null && sucursal > 0) {
       payload['sucursal'] = sucursal;
+    }
+    if (documentoNumero != null && documentoNumero.isNotEmpty) {
+      payload['documento_numero'] = documentoNumero;
+    }
+    if (documentoEmpaqueId != null) {
+      payload['documento_empaque_id'] = documentoEmpaqueId;
     }
     final response = await _client.post(
       apiUri('empleados/$employeeId/horas-ordinarias'),
