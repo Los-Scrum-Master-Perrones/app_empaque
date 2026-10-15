@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' show Abi;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -20,8 +21,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '2.0.3';
-const appBuildNumber = 46;
+const appVersionName = '2.0.4';
+const appBuildNumber = 47;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -2345,6 +2346,27 @@ class AppUpdateInfo {
 
 final appUpdateNotifier = ValueNotifier<AppUpdateInfo?>(null);
 
+/// Arquitectura del telefono, con el mismo nombre que usa el servidor en
+/// `split_apks`: arm64-v8a, armeabi-v7a, x86_64 o universal.
+/// Antes la app descargaba siempre el arm64 y en equipos de 32 bits
+/// la instalacion fallaba ("App not installed").
+String deviceApkAbiKey() {
+  if (!Platform.isAndroid) {
+    return 'universal';
+  }
+
+  try {
+    return switch (Abi.current()) {
+      Abi.androidArm64 => 'arm64-v8a',
+      Abi.androidArm => 'armeabi-v7a',
+      Abi.androidX64 => 'x86_64',
+      _ => 'universal',
+    };
+  } catch (_) {
+    return 'universal';
+  }
+}
+
 Future<AppUpdateInfo?> fetchAppUpdateInfo({http.Client? client}) async {
   final httpClient = client ?? http.Client();
   try {
@@ -2481,7 +2503,20 @@ class _AppNotificationSheetContentState
 
       // Usar directorio temporal interno para evitar restricciones de MANAGE_EXTERNAL_STORAGE en Android 11+
       final targetDir = await getTemporaryDirectory();
-      final apkFile = File('${targetDir.path}/app_update_arm64.apk');
+
+      // Conservar el nombre real del APK (app-empaque-2.0.3-46-arm64-v8a.apk)
+      // para no confundir la variante descargada.
+      final remoteName = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last.trim()
+          : '';
+      final safeName =
+          remoteName.isNotEmpty &&
+              remoteName.toLowerCase().endsWith('.apk') &&
+              !remoteName.contains('/') &&
+              !remoteName.contains('\\')
+          ? remoteName
+          : 'app_update.apk';
+      final apkFile = File('${targetDir.path}/$safeName');
 
       if (await apkFile.exists()) {
         try {
@@ -2589,8 +2624,10 @@ class _AppNotificationSheetContentState
       valueListenable: appUpdateNotifier,
       builder: (context, update, _) {
         final hasUpdate = update?.hasUpdate ?? false;
+        final abiKey = deviceApkAbiKey();
         final targetUrl = update != null
-            ? (update.splitApks['arm64-v8a'] ??
+            ? (update.splitApks[abiKey] ??
+                  update.splitApks['universal'] ??
                   (update.downloadUrl.isNotEmpty ? update.downloadUrl : ''))
             : '';
 
@@ -2695,7 +2732,7 @@ class _AppNotificationSheetContentState
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              'Descargando APK Arm64...',
+                              'Descargando APK ${abiKey == 'universal' ? 'Universal' : abiKey}...',
                               style: TextStyle(
                                 color: palette.text,
                                 fontSize: 13.5,
