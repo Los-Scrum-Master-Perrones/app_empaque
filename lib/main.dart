@@ -9468,6 +9468,8 @@ const dailyRecordsActivityGroups = [
   DailyRecordsActivityGroupOption(key: 'anillado', label: 'Anillado'),
   DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
   DailyRecordsActivityGroupOption(key: 'limpieza', label: 'Limpieza'),
+  DailyRecordsActivityGroupOption(key: 'prensado', label: 'Prensado'),
+  DailyRecordsActivityGroupOption(key: 'rolado', label: 'Rolado'),
 ];
 
 const employeeHoursActivityGroups = [
@@ -9475,6 +9477,8 @@ const employeeHoursActivityGroups = [
   DailyRecordsActivityGroupOption(key: 'anillado', label: 'Anillado'),
   DailyRecordsActivityGroupOption(key: 'llenado', label: 'Llenado'),
   DailyRecordsActivityGroupOption(key: 'limpieza', label: 'Limpieza'),
+  DailyRecordsActivityGroupOption(key: 'prensado', label: 'Prensado'),
+  DailyRecordsActivityGroupOption(key: 'rolado', label: 'Rolado'),
   DailyRecordsActivityGroupOption(key: 'hora', label: 'Por hora'),
 ];
 
@@ -9695,6 +9699,11 @@ bool dailyRecordMatchesActivityGroup(
     ].whereType<String>().join(' '),
   );
 
+  // Prensado (codigo 1) y Rolado Empaque (codigo 171) forman grupo propio.
+  // Tienen prioridad para que no se cuenten tambien como anillado.
+  if (code == '1') return groupKey == 'prensado';
+  if (code == '171') return groupKey == 'rolado';
+
   return switch (groupKey) {
     'rezago' => _matchesRezagoActivityText(name.isNotEmpty ? name : text),
     'anillado' => _matchesAnilladoActivityText(name.isNotEmpty ? name : text),
@@ -9702,6 +9711,8 @@ bool dailyRecordMatchesActivityGroup(
       _matchesLimpiezaActivityText(name.isNotEmpty ? name : text) ||
           code == '103',
     'llenado' => _matchesLlenadoActivityText(text),
+    'prensado' => text.contains('prens'),
+    'rolado' => text.contains('rolad'),
     _ => false,
   };
 }
@@ -10584,6 +10595,10 @@ Color statisticsGroupTone(String key, AppPalette palette) {
       palette.isDark ? const Color(0xFF7DD3FC) : const Color(0xFF0284C7),
     'llenado' =>
       palette.isDark ? const Color(0xFF34D399) : const Color(0xFF059669),
+    'prensado' =>
+      palette.isDark ? const Color(0xFFF87171) : const Color(0xFFDC2626),
+    'rolado' =>
+      palette.isDark ? const Color(0xFF2DD4BF) : const Color(0xFF0D9488),
     _ => palette.isDark ? const Color(0xFFFBBF24) : const Color(0xFFD97706),
   };
 }
@@ -24206,6 +24221,8 @@ class EmployeeHoursOverviewItem {
     if (group == 'anillado') return 'Anillado';
     if (group == 'llenado') return 'Llenado';
     if (group == 'limpieza') return 'Limpieza';
+    if (group == 'prensado') return 'Prensado';
+    if (group == 'rolado') return 'Rolado';
     if (group == 'hora') return 'Por hora';
     if (group == 'rezago') return 'Rezago';
     return 'Doc. #$group';
