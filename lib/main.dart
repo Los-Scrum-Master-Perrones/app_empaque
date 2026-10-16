@@ -19316,7 +19316,14 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                       ? TextField(
                           key: const ValueKey('multi-scan-total-hours'),
                           controller: _hoursController,
-                          keyboardType: TextInputType.datetime,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'[0-9.,:]'),
+                            ),
+                          ],
                           textInputAction: TextInputAction.done,
                           onChanged: (_) => setState(() {}),
                           decoration: const InputDecoration(
