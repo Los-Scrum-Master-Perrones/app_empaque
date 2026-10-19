@@ -16912,13 +16912,9 @@ List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
   }
 
   var totalQ = (totalMinutes / 15).round();
-  const minimo = 1; // 0.25 h
 
-  // Cada viñeta debe tener al menos 1 cuarto (0.25 h): si el total no
-  // alcanza, se sube el total a la cantidad de viñetas.
-  if (totalQ < count) {
-    totalQ = count;
-  }
+  // Se reparte EXACTAMENTE lo pedido: sin minimo por viñeta.
+  // (El minimo de 0.25 h se aplica solo al enviar al ERP.)
   final totalPuros = puros.fold<int>(
     0,
     (acc, value) => acc + (value > 0 ? value : 0),
@@ -16951,28 +16947,6 @@ List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
     }
     cuartos[i]++;
     sobra--;
-  }
-
-  var ajuste = 0;
-  for (var i = 0; i < count; i++) {
-    if (cuartos[i] < minimo) {
-      ajuste += minimo - cuartos[i];
-      cuartos[i] = minimo;
-    }
-  }
-
-  if (ajuste > 0) {
-    var maxIdx = 0;
-    var maxVal = -1;
-    for (var i = 0; i < count; i++) {
-      if (cuartos[i] > maxVal) {
-        maxVal = cuartos[i];
-        maxIdx = i;
-      }
-    }
-    if (maxVal - ajuste >= minimo) {
-      cuartos[maxIdx] -= ajuste;
-    }
   }
 
   return cuartos.map((q) => q * 15).toList(growable: false);
