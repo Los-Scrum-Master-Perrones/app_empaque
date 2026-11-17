@@ -21,8 +21,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '2.1.21';
-const appBuildNumber = 2075;
+const appVersionName = '2.1.22';
+const appBuildNumber = 2076;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -2982,6 +2982,7 @@ class FichaFaltanteItem {
     required this.producto,
     required this.productoNombre,
     required this.sku,
+    required this.capa,
     required this.actividad,
     required this.empaque,
     required this.puros,
@@ -2991,6 +2992,7 @@ class FichaFaltanteItem {
   final String producto;
   final String productoNombre;
   final String sku;
+  final String capa;
   final String actividad;
   final String empaque;
   final int puros;
@@ -3006,6 +3008,7 @@ class FichaFaltanteItem {
       producto: (json['producto'] ?? '').toString().trim(),
       productoNombre: (json['producto_nombre'] ?? '').toString().trim(),
       sku: (json['sku'] ?? '').toString().trim(),
+      capa: (json['capa'] ?? '').toString().trim(),
       actividad: [actividadCodigo, actividadNombre]
           .where((v) => v.isNotEmpty)
           .join(' '),
@@ -3521,6 +3524,15 @@ class _FichaFaltanteSheetState extends State<_FichaFaltanteSheet> {
                         if (item.sku.isNotEmpty)
                           Text(
                             'SKU ${item.sku}',
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        if (item.capa.isNotEmpty)
+                          Text(
+                            'Capa ${item.capa}',
                             style: TextStyle(
                               color: palette.muted,
                               fontSize: 11,
