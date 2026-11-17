@@ -21,8 +21,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '2.0.6';
-const appBuildNumber = 49;
+const appVersionName = '2.1.21';
+const appBuildNumber = 2075;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -2325,8 +2325,13 @@ class AppUpdateInfo {
       }
     });
 
+    // Los APK por ABI que genera Flutter llevan versionCode = abi*1000 + version
+    // (arm64 = 2xxx, armeabi = 1xxx, x86_64 = 4xxx). Se compara solo la parte
+    // de la version para que un split instalado si detecte las actualizaciones.
+    int baseVersionCode(int code) => code >= 1000 ? code % 1000 : code;
+
     final hasUpdate =
-        latestCode > currentVersionCode ||
+        baseVersionCode(latestCode) > baseVersionCode(currentVersionCode) ||
         (latestName.isNotEmpty && latestName != currentVersionName);
 
     return AppUpdateInfo(
@@ -2375,7 +2380,13 @@ Future<AppUpdateInfo?> fetchAppUpdateInfo({http.Client? client}) async {
         .timeout(const Duration(seconds: 8));
 
     if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
+      // Quitar el BOM si el JSON del servidor se subio como texto UTF-8.
+      var cuerpo = response.body;
+      if (cuerpo.isNotEmpty && cuerpo.codeUnitAt(0) == 0xFEFF) {
+        cuerpo = cuerpo.substring(1);
+      }
+
+      final decoded = jsonDecode(cuerpo);
       final data =
           (decoded is Map<String, dynamic> &&
               decoded['data'] is Map<String, dynamic>)
@@ -2551,6 +2562,24 @@ class _AppNotificationSheetContentState
         );
       }
 
+      // El APK debe empezar con "PK" (es un ZIP). Si el archivo se subió al
+      // servidor como texto (BOM/UTF-8) o vino una página de error, Android
+      // lo rechaza con "Se produjo un error durante el análisis".
+      final header = await apkFile.openRead(0, 4).first;
+      final esZip =
+          header.length >= 2 && header[0] == 0x50 && header[1] == 0x4B;
+
+      if (!esZip) {
+        try {
+          await apkFile.delete();
+        } catch (_) {}
+
+        throw Exception(
+          'El APK del servidor está dañado (no es un archivo válido). '
+          'Avisa al administrador para que lo vuelva a subir en modo binario.',
+        );
+      }
+
       if (mounted) {
         setState(() {
           _downloading = false;
@@ -2627,8 +2656,9 @@ class _AppNotificationSheetContentState
         final abiKey = deviceApkAbiKey();
         final targetUrl = update != null
             ? (update.splitApks[abiKey] ??
-                  update.splitApks['universal'] ??
-                  (update.downloadUrl.isNotEmpty ? update.downloadUrl : ''))
+                  (update.downloadUrl.isNotEmpty
+                      ? update.downloadUrl
+                      : (update.splitApks['universal'] ?? '')))
             : '';
 
         return Padding(
@@ -2942,6 +2972,836 @@ class AppNotificationButton extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Un registro de la campanita: producto + actividad + empaque + fecha.
+class FichaFaltanteItem {
+  const FichaFaltanteItem({
+    required this.producto,
+    required this.productoNombre,
+    required this.sku,
+    required this.actividad,
+    required this.empaque,
+    required this.puros,
+    required this.ultima,
+  });
+
+  final String producto;
+  final String productoNombre;
+  final String sku;
+  final String actividad;
+  final String empaque;
+  final int puros;
+  final String ultima;
+
+  factory FichaFaltanteItem.fromJson(Map<String, dynamic> json) {
+    final actividadCodigo = (json['actividad'] ?? '').toString().trim();
+    final actividadNombre = (json['actividad_nombre'] ?? '').toString().trim();
+    final empaqueCodigo = (json['tipo_empaque'] ?? '').toString().trim();
+    final empaqueNombre = (json['tipo_empaque_nombre'] ?? '').toString().trim();
+
+    return FichaFaltanteItem(
+      producto: (json['producto'] ?? '').toString().trim(),
+      productoNombre: (json['producto_nombre'] ?? '').toString().trim(),
+      sku: (json['sku'] ?? '').toString().trim(),
+      actividad: [actividadCodigo, actividadNombre]
+          .where((v) => v.isNotEmpty)
+          .join(' '),
+      empaque: [empaqueCodigo, empaqueNombre]
+          .where((v) => v.isNotEmpty)
+          .join(' '),
+      puros: int.tryParse((json['puros'] ?? '0').toString()) ?? 0,
+      ultima: (json['ultima'] ?? '').toString().trim(),
+    );
+  }
+
+  String get fechaRegistro => ultima.isEmpty ? 'Sin fecha' : 'Fecha $ultima';
+}
+
+/// Actividad que sale en la lista (se puede ignorar para ocultarla).
+class FichaActividadOpcion {
+  const FichaActividadOpcion({
+    required this.codigo,
+    required this.nombre,
+    required this.registros,
+    required this.ignorada,
+  });
+
+  final int codigo;
+  final String nombre;
+  final int registros;
+  final bool ignorada;
+
+  factory FichaActividadOpcion.fromJson(Map<String, dynamic> json) {
+    return FichaActividadOpcion(
+      codigo: int.tryParse((json['codigo'] ?? '0').toString()) ?? 0,
+      nombre: (json['nombre'] ?? '').toString().trim(),
+      registros: int.tryParse((json['registros'] ?? '0').toString()) ?? 0,
+      ignorada: json['ignorada'] == true,
+    );
+  }
+
+  String get etiqueta =>
+      nombre.isEmpty ? 'Actividad $codigo' : '$codigo $nombre';
+}
+
+class FichaFaltanteResumen {
+  const FichaFaltanteResumen({
+    required this.total,
+    required this.items,
+    this.actividades = const [],
+    this.error,
+  });
+
+  final int total;
+  final List<FichaFaltanteItem> items;
+  final List<FichaActividadOpcion> actividades;
+  final String? error;
+
+  static const vacio = FichaFaltanteResumen(total: 0, items: []);
+}
+
+/// Consulta la lista de productos sin ficha de empaque.
+/// Sin fecha = desde el 1 de octubre hasta hoy.
+class FichaFaltanteApi {
+  static Future<FichaFaltanteResumen> cargar(
+    String token, {
+    String? fecha,
+  }) async {
+    final query = <String, String>{'limit': '200'};
+
+    if (fecha != null && fecha.trim().isNotEmpty) {
+      query['fecha'] = fecha.trim();
+    }
+
+    final uri = apiUri('ficha-faltante').replace(queryParameters: query);
+
+    try {
+      final response = await http.get(
+        uri,
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return FichaFaltanteResumen(
+          total: 0,
+          items: const [],
+          error: 'No se pudo consultar (HTTP ${response.statusCode}).',
+        );
+      }
+
+      var texto = utf8.decode(response.bodyBytes, allowMalformed: true);
+
+      if (texto.startsWith('\uFEFF')) {
+        texto = texto.substring(1);
+      }
+
+      final decoded = jsonDecode(texto);
+
+      if (decoded is! Map<String, dynamic>) {
+        return const FichaFaltanteResumen(
+          total: 0,
+          items: [],
+          error: 'Respuesta invalida del servidor.',
+        );
+      }
+
+      final items = (decoded['items'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(FichaFaltanteItem.fromJson)
+          .toList(growable: false);
+
+      final actividades = (decoded['actividades'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(FichaActividadOpcion.fromJson)
+          .toList(growable: false);
+
+      return FichaFaltanteResumen(
+        total: int.tryParse((decoded['total'] ?? '0').toString()) ?? items.length,
+        items: items,
+        actividades: actividades,
+        error: (decoded['error'] ?? '').toString().trim().isEmpty
+            ? null
+            : (decoded['error'] ?? '').toString().trim(),
+      );
+    } catch (e) {
+      return FichaFaltanteResumen(
+        total: 0,
+        items: const [],
+        error: 'No se pudo conectar con el servidor.',
+      );
+    }
+  }
+
+  /// Oculta (o vuelve a mostrar) una actividad en la campanita.
+  static Future<bool> ignorar(
+    String token, {
+    required int codigo,
+    required bool ignorar,
+    String? nombre,
+  }) async {
+    try {
+      final response = await http.post(
+        apiUri('ficha-faltante/actividades/ignorar'),
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode({
+          'codigo': codigo,
+          'ignorar': ignorar,
+          if (nombre != null && nombre.trim().isNotEmpty) 'nombre': nombre.trim(),
+        }),
+      );
+
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+/// Campanita de fichas de empaque: muestra cuantos registros quedaron sin
+/// ficha en el ERP (del 1 de octubre en adelante) con su fecha.
+class FichaFaltanteBell extends StatefulWidget {
+  const FichaFaltanteBell({required this.token, this.compact = true, super.key});
+
+  final String token;
+  final bool compact;
+
+  @override
+  State<FichaFaltanteBell> createState() => _FichaFaltanteBellState();
+}
+
+class _FichaFaltanteBellState extends State<FichaFaltanteBell> {
+  int _total = 0;
+  bool _cargando = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _actualizar();
+  }
+
+  Future<void> _actualizar() async {
+    if (_cargando) return;
+    setState(() => _cargando = true);
+
+    final resumen = await FichaFaltanteApi.cargar(widget.token);
+
+    if (!mounted) return;
+
+    setState(() {
+      _total = resumen.total;
+      _cargando = false;
+    });
+  }
+
+  Future<void> _abrir() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: appPalette(context).surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => _FichaFaltanteSheet(token: widget.token),
+    );
+
+    await _actualizar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final hayPendientes = _total > 0;
+
+    return Stack(
+      alignment: Alignment.center,
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: hayPendientes
+              ? 'Productos sin ficha de empaque ($_total)'
+              : 'Fichas de empaque',
+          onPressed: _abrir,
+          icon: Icon(
+            hayPendientes
+                ? Icons.notification_important_rounded
+                : Icons.notifications_none_rounded,
+            color: hayPendientes
+                ? (palette.isDark
+                      ? const Color(0xFFF87171)
+                      : const Color(0xFFDC2626))
+                : (palette.isDark
+                      ? Colors.white.withValues(alpha: 0.85)
+                      : palette.text.withValues(alpha: 0.85)),
+            size: widget.compact ? 22 : 24,
+          ),
+        ),
+        if (hayPendientes)
+          Positioned(
+            top: widget.compact ? 5 : 7,
+            right: widget.compact ? 3 : 5,
+            child: Container(
+              height: 16,
+              constraints: const BoxConstraints(minWidth: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 3),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xFFDC2626),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(
+                  color: palette.isDark
+                      ? const Color(0xFF0F172A)
+                      : Colors.white,
+                  width: 1.2,
+                ),
+              ),
+              child: Text(
+                '$_total',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _FichaFaltanteSheet extends StatefulWidget {
+  const _FichaFaltanteSheet({required this.token});
+
+  final String token;
+
+  @override
+  State<_FichaFaltanteSheet> createState() => _FichaFaltanteSheetState();
+}
+
+class _FichaFaltanteSheetState extends State<_FichaFaltanteSheet> {
+  bool _cargando = true;
+  FichaFaltanteResumen _resumen = FichaFaltanteResumen.vacio;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    setState(() => _cargando = true);
+
+    final resumen = await FichaFaltanteApi.cargar(widget.token);
+
+    if (!mounted) return;
+
+    setState(() {
+      _resumen = resumen;
+      _cargando = false;
+    });
+  }
+
+  Future<void> _abrirActividades() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: appPalette(context).surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => _FichaActividadesSheet(
+        token: widget.token,
+        iniciales: _resumen.actividades,
+      ),
+    );
+
+    await _cargar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final items = _resumen.items;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        8,
+        20,
+        MediaQuery.of(context).padding.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: palette.isDark
+                      ? const Color(0xFF7F1D1D)
+                      : const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.receipt_long_rounded,
+                  color: Color(0xFFDC2626),
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Productos sin ficha de empaque',
+                      style: TextStyle(
+                        color: palette.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Del 01/10 a hoy · ${_resumen.total} registro(s)',
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Actualizar',
+                onPressed: _cargando ? null : _cargar,
+                icon: _cargando
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                      )
+                    : Icon(Icons.refresh_rounded, color: palette.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _abrirActividades,
+                  icon: const Icon(Icons.tune_rounded, size: 18),
+                  label: const Text(
+                    'Actividades',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _cargando ? null : _cargar,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: const Text(
+                    'Actualizar',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (!_cargando && _resumen.error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                _resumen.error!,
+                style: const TextStyle(
+                  color: Color(0xFFB45309),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          if (_cargando)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 30),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2.4)),
+            )
+          else if (items.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 14),
+              decoration: BoxDecoration(
+                color: palette.isDark
+                    ? const Color(0xFF064E3B)
+                    : const Color(0xFFECFDF5),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.verified_rounded,
+                    color: palette.isDark
+                        ? const Color(0xFF34D399)
+                        : const Color(0xFF059669),
+                    size: 28,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Todos los registros tienen ficha de empaque.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: palette.text,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.55,
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: items.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+
+                  return Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: palette.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: palette.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          item.producto,
+                          style: TextStyle(
+                            color: palette.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        if (item.productoNombre.isNotEmpty) ...[
+                          const SizedBox(height: 1),
+                          Text(
+                            item.productoNombre,
+                            style: TextStyle(
+                              color: palette.text,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                        if (item.sku.isNotEmpty)
+                          Text(
+                            'SKU ${item.sku}',
+                            style: TextStyle(
+                              color: palette.muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        const SizedBox(height: 2),
+                        Text(
+                          item.actividad,
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        Text(
+                          'Empaque ${item.empaque}',
+                          style: TextStyle(
+                            color: palette.muted,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${item.fechaRegistro} · NO EXISTE FICHA',
+                          style: const TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lista de actividades que salen en la campanita, con switch para ignorarlas.
+class _FichaActividadesSheet extends StatefulWidget {
+  const _FichaActividadesSheet({
+    required this.token,
+    required this.iniciales,
+  });
+
+  final String token;
+  final List<FichaActividadOpcion> iniciales;
+
+  @override
+  State<_FichaActividadesSheet> createState() => _FichaActividadesSheetState();
+}
+
+class _FichaActividadesSheetState extends State<_FichaActividadesSheet> {
+  late List<FichaActividadOpcion> _actividades = widget.iniciales;
+  int? _guardando;
+  bool _cargando = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (_actividades.isEmpty) {
+      _recargar();
+    }
+  }
+
+  Future<void> _recargar() async {
+    setState(() => _cargando = true);
+
+    final resumen = await FichaFaltanteApi.cargar(widget.token);
+
+    if (!mounted) return;
+
+    setState(() {
+      _actividades = resumen.actividades;
+      _cargando = false;
+    });
+  }
+
+  Future<void> _cambiar(FichaActividadOpcion actividad, bool ignorar) async {
+    if (_guardando != null) return;
+
+    setState(() => _guardando = actividad.codigo);
+
+    final ok = await FichaFaltanteApi.ignorar(
+      widget.token,
+      codigo: actividad.codigo,
+      ignorar: ignorar,
+      nombre: actividad.nombre,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _guardando = null;
+
+      if (ok) {
+        _actividades = _actividades
+            .map(
+              (item) => item.codigo == actividad.codigo
+                  ? FichaActividadOpcion(
+                      codigo: item.codigo,
+                      nombre: item.nombre,
+                      registros: item.registros,
+                      ignorada: ignorar,
+                    )
+                  : item,
+            )
+            .toList(growable: false);
+      }
+    });
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo guardar. Revisa la conexion.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = appPalette(context);
+    final ocultas = _actividades.where((a) => a.ignorada).length;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        8,
+        20,
+        MediaQuery.of(context).padding.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Actividades de la lista',
+                      style: TextStyle(
+                        color: palette.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Apaga las que no quieras ver (ej. Rezagado). Ocultas: $ocultas',
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Actualizar',
+                onPressed: _cargando ? null : _recargar,
+                icon: _cargando
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2.2),
+                      )
+                    : Icon(Icons.refresh_rounded, color: palette.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_cargando)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2.4)),
+            )
+          else if (_actividades.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 22),
+              child: Text(
+                'No hay actividades en la lista.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: palette.muted,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.5,
+              ),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _actividades.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 6),
+                itemBuilder: (context, index) {
+                  final actividad = _actividades[index];
+                  final guardando = _guardando == actividad.codigo;
+
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: actividad.ignorada
+                          ? (palette.isDark
+                                ? const Color(0xFF7F1D1D)
+                                : const Color(0xFFFEF2F2))
+                          : palette.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: palette.border),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                actividad.etiqueta,
+                                style: TextStyle(
+                                  color: palette.text,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                '${actividad.registros} registro(s)'
+                                '${actividad.ignorada ? ' · oculta' : ''}',
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (guardando)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        else
+                          Switch.adaptive(
+                            value: actividad.ignorada,
+                            onChanged: (valor) => _cambiar(actividad, valor),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          const SizedBox(height: 12),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text(
+              'Listo',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -4597,6 +5457,29 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
   EmployeeHoursOverviewResult? _result;
   List<DailyRecordsActivityGroupOption> _documentosOptions = const [];
   int _globalActionTab = 0;
+  bool _applyingErpAll = false;
+  bool _changingModo = false;
+  String? _modoPagoMensaje;
+  bool _modoPagoError = false;
+
+  /// Numero del documento seleccionado en el filtro (null si es "todos",
+  /// una actividad o "sin documento").
+  String? get _selectedDocumentoNumero {
+    final key = _groupKey.trim();
+
+    if (key.isEmpty ||
+        key == 'todos' ||
+        key == 'sin_documento' ||
+        key == 'hora') {
+      return null;
+    }
+
+    if (employeeHoursActivityGroups.any((option) => option.key == key)) {
+      return null;
+    }
+
+    return key;
+  }
 
   @override
   void initState() {
@@ -4796,10 +5679,10 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 570) {
+    if (totalMinutes <= 0 || totalMinutes > 720) {
       showAppMessage(
         context,
-        'Ingresa una jornada entre 1 minuto y 9 h 30 min.',
+        'Ingresa una jornada entre 1 minuto y 12 h.',
       );
       return;
     }
@@ -4865,6 +5748,234 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
     }
   }
 
+  Future<void> _applyAllToErp() async {
+    if (_applyingErpAll) {
+      return;
+    }
+
+    final employees = _groupEmployees();
+
+    if (employees.isEmpty) {
+      showAppMessage(
+        context,
+        'No hay empleados en $_groupLabel para la fecha seleccionada.',
+      );
+      return;
+    }
+
+    final esDocumento =
+        _groupKey.isNotEmpty &&
+        _groupKey != 'todos' &&
+        _groupKey != 'sin_documento' &&
+        RegExp(r'^\d+$').hasMatch(_groupKey);
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Aplicar horas y puros al ERP'),
+        content: Text(
+          esDocumento
+              ? 'Se aplicará a TODAS las viñetas del documento $_groupKey '
+                    'del ${formatWorkDate(_date)}.\n\n'
+                    'Solo se cambian horas y puros. Los documentos ya aplicados '
+                    'o anulados no se modifican.'
+              : 'Se aplicará a los ${employees.length} empleados de $_groupLabel '
+                    'del ${formatWorkDate(_date)}.\n\n'
+                    'Solo se cambian horas y puros. Los documentos ya aplicados '
+                    'o anulados no se modifican.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Aplicar a todos'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado != true) {
+      return;
+    }
+
+    setState(() {
+      _applyingErpAll = true;
+    });
+
+    if (esDocumento) {
+      try {
+        final result = await widget.authApi.applyDocumentHoursToErp(
+          widget.token,
+          documento: _groupKey,
+          fecha: _date,
+          sucursal: activeSucursalNotifier.value,
+        );
+
+        if (!mounted) return;
+
+        showAppMessage(
+          context,
+          '${result.message} (${result.total} filas, ${result.registros} viñetas)',
+          isError: result.errores > 0,
+        );
+        await _load();
+      } on ApiException catch (error) {
+        if (!mounted) return;
+        showAppMessage(context, error.message);
+      } catch (_) {
+        if (!mounted) return;
+        showAppMessage(context, 'No se pudo aplicar el documento al ERP.');
+      } finally {
+        if (mounted) {
+          setState(() {
+            _applyingErpAll = false;
+          });
+        }
+      }
+      return;
+    }
+
+    var aplicados = 0;
+    var yaIguales = 0;
+    var rechazados = 0;
+    var errores = 0;
+    var empleadosConError = 0;
+
+    for (final item in employees) {
+      try {
+        final result = await widget.authApi.applyHoursToErp(
+          widget.token,
+          employeeId: item.employee.id,
+          date: _date,
+          grupo: _groupKey.isEmpty
+              ? (item.documentoNumero ?? item.group)
+              : _groupKey,
+          sucursal: activeSucursalNotifier.value,
+        );
+        aplicados += result.aplicados;
+        yaIguales += result.yaIguales;
+        rechazados += result.rechazados;
+        errores += result.errores;
+      } catch (_) {
+        empleadosConError++;
+      }
+    }
+
+    if (!mounted) return;
+
+    showAppMessage(
+      context,
+      'ERP: $aplicados actualizados, $yaIguales ya estaban igual, '
+      '$rechazados rechazados, $errores con error'
+      '${empleadosConError > 0 ? ', $empleadosConError empleados sin respuesta' : ''}.',
+      isError: errores > 0 || empleadosConError > 0,
+    );
+
+    await _load();
+
+    if (mounted) {
+      setState(() {
+        _applyingErpAll = false;
+      });
+    }
+  }
+
+  /// Pasa el documento seleccionado a por hora (AL DIA): cambia el modo en el
+  /// sistema y en el ERP, y deja las horas del ERP en 0. Despues, al agregar
+  /// horas ordinarias, se sincronizan solas con el ERP.
+  Future<void> _cambiarModoDocumento() async {
+    final documento = _selectedDocumentoNumero;
+
+    if (documento == null || _changingModo) {
+      return;
+    }
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Pasar el documento a AL DIA'),
+        content: Text(
+          'Documento #$documento del ${formatWorkDate(_date)}.\n\n'
+          'Se pondran TODAS sus viñetas en modo por hora y el ERP quedara '
+          'como "Pago por hora trabajada" con las horas en 0.\n\n'
+          'Despues, las horas ordinarias que se agreguen se sincronizan solas '
+          'con el ERP. Los documentos ya aplicados o anulados no se modifican.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Pasar a AL DIA'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmado != true) {
+      return;
+    }
+
+    setState(() {
+      _changingModo = true;
+      _modoPagoMensaje = null;
+      _modoPagoError = false;
+    });
+
+    try {
+      final result = await widget.authApi.changeDocumentMode(
+        widget.token,
+        documento: documento,
+        modo: 'por_hora',
+        fecha: _date,
+        sucursal: activeSucursalNotifier.value,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _modoPagoMensaje =
+            '${result.actualizados} viñetas en por hora. ERP: ${result.erpMessage}';
+        _modoPagoError = !result.erpOk;
+      });
+
+      showAppMessage(
+        context,
+        result.erpOk
+            ? 'Documento #$documento en AL DIA. ${result.erpMessage}'
+            : 'Sistema actualizado, pero el ERP respondio: ${result.erpMessage}',
+        isError: !result.erpOk,
+      );
+
+      await _load();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _modoPagoMensaje = error.message;
+        _modoPagoError = true;
+      });
+      showAppMessage(context, error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _modoPagoMensaje = 'No se pudo cambiar el modo del documento.';
+        _modoPagoError = true;
+      });
+      showAppMessage(context, 'No se pudo cambiar el modo del documento.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _changingModo = false;
+        });
+      }
+    }
+  }
+
   Future<void> _saveGroupOrdinaryHour() async {
     if (_savingJornada) {
       return;
@@ -4888,10 +5999,10 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 570) {
+    if (totalMinutes <= 0 || totalMinutes > 720) {
       showAppMessage(
         context,
-        'Ingresa una jornada entre 1 minuto y 9 h 30 min.',
+        'Ingresa una jornada entre 1 minuto y 12 h.',
       );
       return;
     }
@@ -5028,6 +6139,86 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
       return text.contains(normalizedSearch);
     }).toList(growable: false);
+  }
+
+  /// Tarjeta que aparece al seleccionar un documento: pasa el documento a
+  /// AL DIA (por hora) en el sistema y en el ERP, con las horas en 0.
+  Widget _buildModoPagoCard(AppPalette palette) {
+    final documento = _selectedDocumentoNumero;
+
+    if (documento == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: palette.primary.withValues(alpha: 0.35)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.payments_rounded, size: 16, color: palette.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Modo de pago del documento #$documento',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: palette.text,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Si el documento es AL DIA (por hora), este boton pone todas sus '
+              'viñetas en por hora y deja el ERP como "Pago por hora trabajada" '
+              'con las horas en 0. Las horas ordinarias que se agreguen despues '
+              'se sincronizan solas con el ERP.',
+              style: TextStyle(fontSize: 11, color: palette.muted, height: 1.35),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: _changingModo ? null : _cambiarModoDocumento,
+              icon: _changingModo
+                  ? SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.onPrimary,
+                      ),
+                    )
+                  : const Icon(Icons.swap_horiz_rounded, size: 18),
+              label: Text(
+                _changingModo ? 'Cambiando...' : 'Pasar a AL DIA (por hora)',
+              ),
+            ),
+            if (_modoPagoMensaje != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _modoPagoMensaje!,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: _modoPagoError ? const Color(0xFFDC2626) : palette.muted,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildDocumentCard(
@@ -5427,6 +6618,11 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                   }).toList(growable: false),
                 ),
 
+              if (_selectedDocumentoNumero != null) ...[
+                const SizedBox(height: 8),
+                _buildModoPagoCard(palette),
+              ],
+
               if (!_loading && _error == null && groupEmployees.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 SegmentedButton<int>(
@@ -5452,13 +6648,15 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                 const SizedBox(height: 8),
                 if (_globalActionTab == 0) ...[
                   EmployeeWorkdayForm(
-                    enabled: !_savingJornada,
+                    enabled: !_savingJornada && !_applyingErpAll,
                     hoursController: _jornadaHoursController,
                     minutesController: _jornadaMinutesController,
                     saving: _savingJornada,
                     description:
                         'Se aplicará a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)} entre sus viñetas.',
                     onSubmit: _saveGroupWorkday,
+                    onApplyToErp: _applyAllToErp,
+                    applyingToErp: _applyingErpAll,
                   ),
                 ] else ...[
                   EmployeeOrdinaryHourForm(
@@ -6803,6 +8001,19 @@ class EmployeeSeguimientoActivityTile extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
+                if (activity.productDetail.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    activity.productDetail,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: palette.muted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 3),
                 Text(
                   '${formatIntegerWithCommas(activity.puros)} puros',
@@ -7423,6 +8634,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
   bool _loading = true;
   bool _saving = false;
   bool _savingWorkday = false;
+  bool _applyingErp = false;
   String? _error;
   EmployeeHoursDayInfo? _result;
   EmployeeOrdinaryHourInfo? _editingHour;
@@ -7454,8 +8666,8 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         minutes < 0 ||
         minutes > 59 ||
         totalMinutes <= 0 ||
-        totalMinutes > 570) {
-      _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30 min.');
+        totalMinutes > 720) {
+      _showMessage('Ingresa un tiempo entre 1 minuto y 12 h.');
       return;
     }
 
@@ -7493,6 +8705,75 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
       if (mounted) {
         setState(() {
           _savingWorkday = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _applyHoursToErp() async {
+    final groupLabel = widget.group.isEmpty || widget.group == 'todos'
+        ? 'todos los documentos'
+        : widget.group;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Aplicar ajuste de horas al ERP'),
+        content: Text(
+          'Se pondrán en el ERP las horas y los puros que tiene el sistema para '
+          '${widget.employee.nombre} el ${formatWorkDate(_date)} ($groupLabel), '
+          'agrupado por documento + actividad + orden + empleado.\n\n'
+          'Solo se cambian las horas y las cantidades de esa fila. '
+          'Los documentos ya aplicados/contabilizados no se modifican.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Aplicar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) {
+      return;
+    }
+
+    setState(() {
+      _applyingErp = true;
+    });
+
+    try {
+      final result = await widget.authApi.applyHoursToErp(
+        widget.token,
+        employeeId: widget.employee.id,
+        date: _date,
+        grupo: widget.group,
+        sucursal: activeSucursalNotifier.value,
+      );
+
+      if (!mounted) return;
+
+      final detalle = result.detalle.take(6).join('\n');
+      _showMessage(
+        '${result.message}${detalle.isEmpty ? '' : '\n$detalle'}',
+        isError: result.errores > 0,
+      );
+      await _load();
+      await widget.onChanged?.call();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('No se pudo aplicar el ajuste de horas al ERP.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _applyingErp = false;
         });
       }
     }
@@ -7581,8 +8862,8 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 570) {
-      _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30 min.');
+    if (totalMinutes <= 0 || totalMinutes > 720) {
+      _showMessage('Ingresa un tiempo entre 1 minuto y 12 h.');
       return;
     }
 
@@ -7800,10 +9081,10 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
                     minutes < 0 ||
                     minutes > 59 ||
                     total <= 0 ||
-                    total > 570) {
+                    total > 720) {
                   setDialogState(() {
                     validationError =
-                        'Ingresa un tiempo entre 1 min y 9 h 30 min.';
+                        'Ingresa un tiempo entre 1 min y 12 h.';
                   });
                   return;
                 }
@@ -8159,6 +9440,8 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
               ? 'Actualizar o redistribuir la jornada individual para ${widget.employee.nombre}.'
               : 'Distribuir tiempo de jornada laboral individual para ${widget.employee.nombre} entre sus viñetas.',
           onSubmit: _saveIndividualWorkday,
+          onApplyToErp: _applyHoursToErp,
+          applyingToErp: _applyingErp,
         ),
       ],
     ];
@@ -8787,6 +10070,8 @@ class EmployeeWorkdayForm extends StatelessWidget {
     required this.saving,
     required this.description,
     required this.onSubmit,
+    this.onApplyToErp,
+    this.applyingToErp = false,
     super.key,
   });
 
@@ -8796,6 +10081,8 @@ class EmployeeWorkdayForm extends StatelessWidget {
   final bool saving;
   final String description;
   final VoidCallback onSubmit;
+  final VoidCallback? onApplyToErp;
+  final bool applyingToErp;
 
   @override
   Widget build(BuildContext context) {
@@ -8875,6 +10162,25 @@ class EmployeeWorkdayForm extends StatelessWidget {
                   : const Icon(Icons.work_history_rounded),
               label: Text(saving ? 'Distribuyendo...' : 'Distribuir jornada'),
             ),
+            if (onApplyToErp != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const ValueKey('workday-apply-erp'),
+                onPressed: enabled && !applyingToErp ? onApplyToErp : null,
+                icon: applyingToErp
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.cloud_upload_rounded),
+                label: Text(
+                  applyingToErp
+                      ? 'Aplicando al ERP...'
+                      : 'Aplicar horas y puros al ERP',
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -10670,6 +11976,7 @@ class _DailyRecordsEmployeeRecordsPageState
   late DailyRecordsEmployeeSummary _summary;
   late List<DailyVinetaRegistroInfo> _records;
   String? _expandedBrandKey;
+  String? _applyingBrandKey;
   bool _loading = false;
   bool _changed = false;
   String? _error;
@@ -10679,6 +11986,66 @@ class _DailyRecordsEmployeeRecordsPageState
     super.initState();
     _summary = widget.initialSummary;
     _records = List<DailyVinetaRegistroInfo>.of(widget.initialSummary.records);
+  }
+
+  Future<void> _applyBrandToErp(DailyRecordsProductGroup group) async {
+    if (_applyingBrandKey != null) {
+      return;
+    }
+
+    final marca = _dailyRecordsGroupBrand(group.first).trim();
+
+    if (marca.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Esta marca no tiene nombre; aplica desde el botón del empleado.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _applyingBrandKey = group.key;
+    });
+
+    try {
+      final result = await widget.authApi.applyHoursToErpByCode(
+        widget.token,
+        empleadoCodigo: widget.initialSummary.codigo,
+        date: widget.date,
+        grupo: widget.documentoKey,
+        marca: marca,
+        sucursal: activeSucursalNotifier.value,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$marca: ${result.message}'),
+          backgroundColor: result.errores > 0 ? Colors.red.shade700 : null,
+        ),
+      );
+      await _load();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo aplicar la marca al ERP.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _applyingBrandKey = null;
+        });
+      }
+    }
   }
 
   Future<void> _load() async {
@@ -10840,6 +12207,10 @@ class _DailyRecordsEmployeeRecordsPageState
                             : recordGroups[index].key;
                       });
                     },
+                    onApplyToErp: () =>
+                        _applyBrandToErp(recordGroups[index]),
+                    applyingToErp:
+                        _applyingBrandKey == recordGroups[index].key,
                     children: [
                       for (final record in recordGroups[index].records)
                         Dismissible(
@@ -10901,8 +12272,37 @@ class DailyRecordsProductGroup {
 
   String get meta {
     return _joinRecordParts([
+      _dailyRecordsGroupMetaPart('Código', first.producto.codigoProducto),
       _dailyRecordsGroupMetaPart('Item', first.producto.item),
+      _dailyRecordsGroupMetaPart('Capa', first.producto.capa),
       _dailyRecordsGroupMetaPart('ODS', first.ordenDelSistema),
+      _dailyRecordsGroupMetaPart('Orden cliente', first.orden),
+    ]);
+  }
+
+  /// Descripcion del producto: codigo, marca, nombre, vitola y capa.
+  String get descripcionProducto {
+    return _joinRecordParts([
+      first.producto.codigoProducto,
+      first.producto.marca,
+      first.producto.nombre,
+      first.producto.vitola,
+      first.producto.capa,
+    ]);
+  }
+
+  /// Segunda linea: item y tipo de empaque.
+  String get itemEmpaque {
+    return _joinRecordParts([
+      first.producto.item,
+      first.producto.tipoEmpaque,
+    ]);
+  }
+
+  /// Tercera linea: orden del sistema y orden del cliente.
+  String get ordenes {
+    return _joinRecordParts([
+      _dailyRecordsGroupMetaPart('Orden sistema', first.ordenDelSistema),
       _dailyRecordsGroupMetaPart('Orden cliente', first.orden),
     ]);
   }
@@ -10930,6 +12330,7 @@ String dailyRecordsProductGroupKey(DailyVinetaRegistroInfo record) {
   return [
     _dailyRecordsGroupBrand(record),
     record.producto.item,
+    record.producto.codigoProducto,
     record.ordenDelSistema,
     record.orden,
   ].map(_dailyRecordsGroupPart).join('|');
@@ -10983,6 +12384,8 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
     required this.expanded,
     required this.onToggle,
     required this.children,
+    this.onApplyToErp,
+    this.applyingToErp = false,
     super.key,
   });
 
@@ -10990,11 +12393,15 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
   final bool expanded;
   final VoidCallback onToggle;
   final List<Widget> children;
+  final VoidCallback? onApplyToErp;
+  final bool applyingToErp;
 
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
-    final meta = group.meta;
+    final descripcion = group.descripcionProducto;
+    final itemEmpaque = group.itemEmpaque;
+    final ordenes = group.ordenes;
     final vinetasLabel = group.records.length == 1 ? 'viñeta' : 'viñetas';
     final actividadesLabel = group.totalActividades == 1
         ? 'actividad'
@@ -11024,26 +12431,43 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Descripcion del producto EN NEGRITA y completa
+                        // (sin maxLines: se ve todo aunque ocupe mas espacio).
                         Text(
-                          group.title,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
+                          descripcion.isEmpty
+                              ? group.title
+                              : descripcion,
+                          softWrap: true,
                           style: TextStyle(
                             color: palette.text,
                             fontSize: 14,
                             fontWeight: FontWeight.w900,
+                            height: 1.25,
                           ),
                         ),
-                        if (meta.isNotEmpty) ...[
-                          const SizedBox(height: 3),
+                        if (itemEmpaque.isNotEmpty) ...[
+                          const SizedBox(height: 4),
                           Text(
-                            meta,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                            itemEmpaque,
+                            softWrap: true,
+                            style: TextStyle(
+                              color: palette.text,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              height: 1.25,
+                            ),
+                          ),
+                        ],
+                        if (ordenes.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            ordenes,
+                            softWrap: true,
                             style: TextStyle(
                               color: palette.muted,
                               fontSize: 11.5,
                               fontWeight: FontWeight.w700,
+                              height: 1.25,
                             ),
                           ),
                         ],
@@ -11099,7 +12523,28 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: children,
+                children: [
+                  if (onApplyToErp != null) ...[
+                    OutlinedButton.icon(
+                      key: ValueKey('brand-apply-erp-${group.key}'),
+                      onPressed: applyingToErp ? null : onApplyToErp,
+                      icon: applyingToErp
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.cloud_upload_rounded, size: 18),
+                      label: Text(
+                        applyingToErp
+                            ? 'Aplicando...'
+                            : 'Aplicar esta marca al ERP',
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  ...children,
+                ],
               ),
             ),
             crossFadeState: expanded
@@ -12855,6 +14300,10 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
   late DateTime _date;
   late String _mode;
   ActivityInfo? _selectedActivity;
+  String? _documentoNumero;
+  int? _documentoEmpaqueId;
+  List<DocumentoEmpaqueInfo> _documentos = const <DocumentoEmpaqueInfo>[];
+  bool _loadingDocumentos = false;
   bool _saving = false;
   String? _error;
 
@@ -12864,6 +14313,9 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     final record = widget.record;
     _date = record.fechaRegistroDate ?? DateTime.now();
     _mode = record.porHora ? 'por_hora' : 'por_tarea';
+    _documentoNumero = record.documentoNumero;
+    _documentoEmpaqueId = record.documentoEmpaqueId;
+    unawaited(_loadDocumentos());
     _employeeController = TextEditingController(text: record.empleado.codigo);
     _quantityController = TextEditingController(
       text: record.cantidadPuros.toString(),
@@ -12895,6 +14347,186 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     super.dispose();
   }
 
+  /// Documento seleccionado (de la lista de la fecha).
+  DocumentoEmpaqueInfo? get _documentoSeleccionado {
+    for (final documento in _documentos) {
+      if (documento.numero == _documentoNumero) {
+        return documento;
+      }
+    }
+
+    return null;
+  }
+
+  /// Texto completo del documento (observacion + descripcion).
+  String _documentoDetalle(DocumentoEmpaqueInfo doc) {
+    final observacion = doc.observaciones?.trim() ?? '';
+    final descripcion = doc.descripcion?.trim() ?? '';
+
+    if (observacion.isEmpty) {
+      return descripcion;
+    }
+
+    if (descripcion.isEmpty || observacion.toLowerCase() == descripcion.toLowerCase()) {
+      return observacion;
+    }
+
+    return '$observacion\n$descripcion';
+  }
+
+  Future<void> _selectDocumento() async {
+    FocusScope.of(context).unfocus();
+
+    final elegido = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        final palette = appPalette(sheetContext);
+
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          maxChildSize: 0.95,
+          builder: (context2, controller) {
+            return ListView(
+              controller: controller,
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+              children: [
+                Text(
+                  'Elegir documento',
+                  style: TextStyle(
+                    color: palette.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  key: const ValueKey('documento-sin'),
+                  leading: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF94A3B8),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  title: const Text('Sin documento'),
+                  onTap: () => Navigator.of(context2).pop(''),
+                ),
+                if (_documentos.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'No hay documentos para esa fecha.',
+                      style: TextStyle(
+                        color: palette.muted,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                for (final doc in _documentos)
+                  ListTile(
+                    key: ValueKey('documento-${doc.numero}'),
+                    leading: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: getDocumentoCategoryColor(
+                          doc.descripcion,
+                          doc.observaciones,
+                        ),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    title: Text(
+                      'Doc. #${doc.numero}',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    subtitle: Text(
+                      _documentoDetalle(doc).isEmpty
+                          ? 'Sin descripción'
+                          : _documentoDetalle(doc),
+                      maxLines: 5,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    isThreeLine: true,
+                    onTap: () => Navigator.of(context2).pop(doc.numero),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (elegido == null || !mounted) {
+      return;
+    }
+
+    int? documentoId;
+    for (final documento in _documentos) {
+      if (documento.numero == elegido) {
+        documentoId = documento.id;
+        break;
+      }
+    }
+
+    setState(() {
+      _documentoNumero = elegido.isEmpty ? null : elegido;
+      _documentoEmpaqueId = documentoId;
+    });
+  }
+
+  Future<void> _loadDocumentos() async {
+    setState(() {
+      _loadingDocumentos = true;
+    });
+
+    try {
+      final documentos = await widget.authApi.getDocumentosEmpaques(
+        widget.token,
+        fecha: _date,
+        sucursal: widget.record.sucursal ?? 2,
+      );
+
+      if (!mounted) return;
+
+      // Si el registro ya tiene un documento que no viene en la lista de la
+      // fecha, se agrega igual: con ese se guardo y debe poder verse/elegirse.
+      final numeroActual = (_documentoNumero ?? '').trim();
+      final lista = List<DocumentoEmpaqueInfo>.of(documentos);
+
+      if (numeroActual.isNotEmpty &&
+          !lista.any((d) => d.numero.trim() == numeroActual)) {
+        lista.insert(
+          0,
+          DocumentoEmpaqueInfo(
+            numero: numeroActual,
+            descripcion: 'Documento actual',
+            id: _documentoEmpaqueId,
+          ),
+        );
+      }
+
+      setState(() {
+        _documentos = lista;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _documentos = const <DocumentoEmpaqueInfo>[];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingDocumentos = false;
+        });
+      }
+    }
+  }
+
   Future<void> _selectDate() async {
     final now = DateTime.now();
     final maxDate = now.add(const Duration(days: 14));
@@ -12912,7 +14544,10 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
 
     setState(() {
       _date = DateTime(selected.year, selected.month, selected.day);
+      _documentoNumero = null;
+      _documentoEmpaqueId = null;
     });
+    unawaited(_loadDocumentos());
   }
 
   Future<void> _selectActivity() async {
@@ -12974,9 +14609,9 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
       return;
     }
 
-    if (!porHora && (minutes == null || minutes < 0 || minutes > 570)) {
+    if (!porHora && (minutes == null || minutes < 0 || minutes > 720)) {
       setState(() {
-        _error = 'Ingresa minutos entre 0 y 570.';
+        _error = 'Ingresa minutos entre 0 y 720.';
       });
       return;
     }
@@ -12995,7 +14630,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     });
 
     try {
-      await widget.authApi.updateDailyVinetaRegistro(
+      final result = await widget.authApi.updateDailyVinetaRegistro(
         widget.token,
         registroId: widget.record.id,
         date: _date,
@@ -13005,9 +14640,50 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
         modoRegistro: _mode,
         minutosTrabajados: minutes,
         activity: activity,
+        documentoNumero: _documentoNumero,
+        documentoEmpaqueId: _documentoEmpaqueId,
       );
 
       if (!mounted) return;
+
+      // Si el ERP no pudo aplicarlo (documento aplicado/anulado), se avisa
+      // y no se cierra, para que el operador lo vea.
+      final erpRegistro = result['erp_registro'];
+      final erpAjuste = result['erp_ajuste_horas'];
+      final erpMensaje = (erpRegistro is Map && erpRegistro['success'] != true)
+          ? _nullableString(erpRegistro['message'])
+          : (erpAjuste is Map && erpAjuste['success'] != true)
+          ? _nullableString(erpAjuste['message'])
+          : null;
+
+      if (erpMensaje != null && erpMensaje.isNotEmpty) {
+        setState(() {
+          _saving = false;
+          _error = 'Guardado en el sistema. ERP: $erpMensaje';
+        });
+        return;
+      }
+
+      // Aviso de que paso con el ERP (registrado, actualizado o no se toco).
+      String avisoErp;
+      if (erpRegistro is Map && erpRegistro['success'] == true) {
+        avisoErp = 'Registrado en el ERP.';
+      } else if (erpAjuste is Map && erpAjuste['success'] == true) {
+        avisoErp = (erpAjuste['cambiado'] == true)
+            ? 'Horas/puros actualizados en el ERP.'
+            : 'El ERP ya estaba igual (no se cambió).';
+      } else if ((_documentoNumero ?? '').trim().isEmpty) {
+        avisoErp = 'Solo en el sistema (sin documento, no va al ERP).';
+      } else {
+        avisoErp = 'Solo en el sistema (el registro no se ha enviado al ERP).';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Guardado. $avisoErp'),
+          backgroundColor: const Color(0xFF166534),
+        ),
+      );
 
       Navigator.of(context).pop(true);
     } on ApiException catch (error) {
@@ -13129,6 +14805,75 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              InkWell(
+                key: const ValueKey('daily-record-documento'),
+                borderRadius: BorderRadius.circular(18),
+                onTap: _saving || _loadingDocumentos ? null : _selectDocumento,
+                child: InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: 'Documento',
+                    prefixIcon: const Icon(Icons.receipt_long_rounded),
+                    suffixIcon: const Icon(Icons.search_rounded),
+                    helperText: _loadingDocumentos
+                        ? 'Cargando documentos...'
+                        : 'Toca para elegir el documento',
+                  ),
+                  child: _documentoSeleccionado == null
+                      ? Text(
+                          'Sin documento',
+                          style: TextStyle(
+                            color: palette.text,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 10,
+                                  height: 10,
+                                  decoration: BoxDecoration(
+                                    color: getDocumentoCategoryColor(
+                                      _documentoSeleccionado!.descripcion,
+                                      _documentoSeleccionado!.observaciones,
+                                    ),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Doc. #${_documentoSeleccionado!.numero}',
+                                    style: TextStyle(
+                                      color: palette.text,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_documentoDetalle(
+                              _documentoSeleccionado!,
+                            ).isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _documentoDetalle(_documentoSeleccionado!),
+                                maxLines: 5,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.muted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                 ),
               ),
               const SizedBox(height: 10),
@@ -14201,6 +15946,8 @@ class AppScaffold extends StatelessWidget {
           ),
         ),
         actions: [
+          if (token != null && token!.isNotEmpty)
+            FichaFaltanteBell(token: token!),
           const AppNotificationButton(compact: true),
           ThemeToggleButton(
             isDarkMode: isDarkMode,
@@ -16911,30 +18658,30 @@ List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
     return const [];
   }
 
-  var totalQ = (totalMinutes / 15).round();
+  // Se reparte EXACTAMENTE lo pedido, en MINUTOS enteros (no en cuartos):
+  // asi ninguna viñeta queda en 0 y el total no sube ni baja.
+  final totalMin = totalMinutes < 0 ? 0 : totalMinutes;
 
-  // Se reparte EXACTAMENTE lo pedido: sin minimo por viñeta.
-  // (El minimo de 0.25 h se aplica solo al enviar al ERP.)
   final totalPuros = puros.fold<int>(
     0,
     (acc, value) => acc + (value > 0 ? value : 0),
   );
 
-  final cuartos = List<int>.filled(count, 0);
+  final minutos = List<int>.filled(count, 0);
   final rems = List<double>.filled(count, 0);
   var asignado = 0;
 
   for (var i = 0; i < count; i++) {
     final exact = totalPuros > 0
-        ? (puros[i] / totalPuros) * totalQ
-        : totalQ / count;
+        ? (puros[i] / totalPuros) * totalMin
+        : totalMin / count;
     final floor = exact.floor();
-    cuartos[i] = floor;
+    minutos[i] = floor;
     rems[i] = exact - floor;
     asignado += floor;
   }
 
-  var sobra = totalQ - asignado;
+  var sobra = totalMin - asignado;
   final orden = List<int>.generate(count, (i) => i)
     ..sort((a, b) {
       final cmp = rems[b].compareTo(rems[a]);
@@ -16945,11 +18692,32 @@ List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
     if (sobra <= 0) {
       break;
     }
-    cuartos[i]++;
+    minutos[i]++;
     sobra--;
   }
 
-  return cuartos.map((q) => q * 15).toList(growable: false);
+  // Que ninguna quede en 0: se le quita 1 minuto a la que mas tiene.
+  for (var i = 0; i < count; i++) {
+    if (minutos[i] > 0) {
+      continue;
+    }
+
+    var maxIdx = -1;
+    var maxQ = 1;
+    for (var j = 0; j < count; j++) {
+      if (minutos[j] > maxQ) {
+        maxQ = minutos[j];
+        maxIdx = j;
+      }
+    }
+
+    if (maxIdx >= 0) {
+      minutos[maxIdx]--;
+      minutos[i] = 1;
+    }
+  }
+
+  return minutos;
 }
 
 class MultiVinetaScanPage extends StatefulWidget {
@@ -17002,6 +18770,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   bool _loadingDocumentos = false;
   String? _documentosError;
   int _documentosRequestId = 0;
+  final TextEditingController _codigoManualController = TextEditingController();
 
   @override
   void initState() {
@@ -17035,6 +18804,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     _quantityController.dispose();
     _hoursController.dispose();
     _cameraController.dispose();
+    _codigoManualController.dispose();
     super.dispose();
   }
 
@@ -17491,12 +19261,6 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
   }
 
   Future<void> _handleDetect(BarcodeCapture capture) async {
-    final employee = _employee;
-
-    if (employee == null || _processingScan || _saving) {
-      return;
-    }
-
     final code = capture.barcodes
         .map((barcode) => barcode.rawValue)
         .whereType<String>()
@@ -17509,6 +19273,18 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     final normalizedCode = code.trim();
 
     if (_shouldIgnoreDetection(normalizedCode)) {
+      return;
+    }
+
+    await _agregarPorCodigo(normalizedCode);
+  }
+
+  /// Agrega una viñeta por CODIGO (escaneo o escrito a mano). Todo el alta es
+  /// el mismo camino: mismo key, misma actividad y misma validacion.
+  Future<void> _agregarPorCodigo(String normalizedCode) async {
+    final employee = _employee;
+
+    if (employee == null || _processingScan || _saving) {
       return;
     }
 
@@ -17688,6 +19464,25 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
           _processingScan = false;
         });
       }
+    }
+  }
+
+  /// Si el QR no se puede escanear, se escribe el codigo a mano y se agrega
+  /// con exactamente el mismo camino que el escaneo.
+  Future<void> _agregarManual() async {
+    final code = _codigoManualController.text.trim();
+
+    if (code.isEmpty) {
+      setState(() {
+        _scanError = 'Ingresa el código de la viñeta.';
+      });
+      return;
+    }
+
+    await _agregarPorCodigo(code);
+
+    if (mounted) {
+      _codigoManualController.clear();
     }
   }
 
@@ -19228,6 +21023,51 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                   ),
                 ),
               ),
+              // Código manual: si el QR no se puede escanear, se escribe.
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _codigoManualController,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _agregarManual(),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: 'Código de la viñeta (ej. 12345, li-1)',
+                          hintStyle: const TextStyle(fontSize: 12),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 10,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    FilledButton.icon(
+                      onPressed: _processingScan || _saving
+                          ? null
+                          : _agregarManual,
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('Agregar'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               if (_scanError != null || _scanNotice != null) ...[
                 const SizedBox(height: 5),
                 CompactStatusLine(
@@ -19888,6 +21728,11 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
   late VinetaProcessInfo _process;
   int _dailySummaryRequestId = 0;
 
+  // Documento del ERP a donde va este registro (escaneo individual).
+  List<DocumentoEmpaqueInfo> _documentos = const [];
+  DocumentoEmpaqueInfo? _selectedDocumento;
+  bool _loadingDocumentos = false;
+
   @override
   void initState() {
     super.initState();
@@ -19896,6 +21741,7 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
     _process = widget.vineta.process;
     _applyRememberedRegistro();
     _loadActivities();
+    unawaited(_loadDocumentos());
 
     final rememberedEmployee = _employee;
     if (rememberedEmployee != null) {
@@ -19931,6 +21777,46 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
     } else {
       _quantityController.clear();
     }
+  }
+
+  Future<void> _loadDocumentos() async {
+    setState(() {
+      _loadingDocumentos = true;
+    });
+
+    try {
+      final docs = await widget.authApi.getDocumentosEmpaques(
+        widget.token,
+        fecha: _scanDateTime,
+        sucursal: activeSucursalNotifier.value,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _documentos = docs;
+        _selectedDocumento = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _documentos = const [];
+        _selectedDocumento = null;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingDocumentos = false;
+        });
+      }
+    }
+  }
+
+  void _selectDocumento(DocumentoEmpaqueInfo? doc) {
+    setState(() {
+      _selectedDocumento = doc;
+    });
   }
 
   Future<void> _loadActivities() async {
@@ -20319,8 +22205,8 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       return;
     }
 
-    if (taskMode && (minutos == null || minutos < 0 || minutos > 570)) {
-      _showMessage('Ingresa minutos entre 0 y 570.');
+    if (taskMode && (minutos == null || minutos < 0 || minutos > 720)) {
+      _showMessage('Ingresa minutos entre 0 y 720.');
       return;
     }
 
@@ -20335,6 +22221,15 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
 
     if (activity == null) {
       _showMessage('Selecciona una actividad antes de guardar.');
+      return;
+    }
+
+    // El documento del ERP es obligatorio: sin el, el registro queda sin
+    // documento y no se puede comparar/aplicar al ERP.
+    final documento = _selectedDocumento;
+
+    if (documento == null || documento.numero.trim().isEmpty) {
+      _showMessage('Selecciona el documento antes de guardar.');
       return;
     }
 
@@ -20360,6 +22255,9 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
         minutosTrabajados: minutosTrabajados,
         registradoEn: _scanDateTime,
         taskMode: taskMode,
+        documentoNumero: documento.numero,
+        documentoEmpaqueId: documento.id,
+        sucursal: activeSucursalNotifier.value,
       );
 
       _rememberVinetaRegistro(
@@ -20437,11 +22335,113 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
     unawaited(_loadEmployeeDailySummary());
   }
 
+  Widget _documentoCard(dynamic palette) {
+    return Card(
+      elevation: 0,
+      color: palette.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide.none,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.receipt_long_rounded, size: 18, color: palette.text),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Documento del ERP',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: palette.text,
+                    ),
+                  ),
+                ),
+                if (_loadingDocumentos)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_documentos.isEmpty && !_loadingDocumentos)
+              Text(
+                'No hay documentos para ${formatWorkDate(_scanDateTime)}.',
+                style: TextStyle(fontSize: 11.5, color: palette.muted),
+              )
+            else if (_documentos.isNotEmpty)
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [for (final doc in _documentos) _documentoChip(doc, palette)],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _documentoChip(DocumentoEmpaqueInfo doc, dynamic palette) {
+    final seleccionado = _selectedDocumento?.numero == doc.numero;
+
+    return InkWell(
+      onTap: () => _selectDocumento(seleccionado ? null : doc),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: seleccionado ? palette.primary : palette.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: seleccionado ? palette.primary : palette.muted,
+            width: 1.2,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Doc. ${doc.numero}',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w900,
+                color: seleccionado ? Colors.white : palette.text,
+              ),
+            ),
+            if ((doc.descripcion ?? '').trim().isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 190),
+                child: Text(
+                  doc.descripcion!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: seleccionado ? Colors.white70 : palette.muted,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = appPalette(context);
     final vineta = widget.vineta;
     final details = [
+      if ((vineta.areaTitulo ?? vineta.area ?? '').trim().isNotEmpty)
+        DetailItem('Area', vineta.areaTitulo ?? vineta.area, highlighted: true),
       DetailItem('Producto', vineta.nombre, highlighted: true),
       DetailItem('Código', vineta.codigoProducto, highlighted: true),
       DetailItem('Item', vineta.item, highlighted: true),
@@ -20457,7 +22457,13 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Informacion de viñeta')),
+      appBar: AppBar(
+        title: Text(
+          (vineta.areaTitulo ?? vineta.area ?? '').trim().isEmpty
+              ? 'Informacion de viñeta'
+              : 'Viñeta ${vineta.areaTitulo ?? vineta.area}',
+        ),
+      ),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
@@ -20469,6 +22475,8 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
                 process: _process,
                 selectedGroup: _selectedActivity?.processGroup,
               ),
+              const SizedBox(height: 7),
+              _documentoCard(palette),
               const SizedBox(height: 7),
               Expanded(
                 child: SingleChildScrollView(
@@ -21623,6 +23631,26 @@ class ActivityTile extends StatelessWidget {
   }
 }
 
+/// Texto del aviso: descripcion del producto + tipo de empaque + actividad.
+String _textoSinFicha(ActivityInfo activity) {
+  final descripcion = [
+    activity.codigoProducto,
+    activity.productoNombre,
+  ].where((v) => v != null && v.trim().isNotEmpty).map((v) => v!.trim()).join(' · ');
+
+  final empaque = (activity.tipoEmpaque ?? '').trim();
+  final actividad =
+      '${activity.codigoActividad ?? ''} ${activity.nombre ?? ''}'.trim();
+
+  final partes = <String>[
+    if (descripcion.isNotEmpty) descripcion,
+    if (empaque.isNotEmpty) 'Empaque $empaque',
+    'Actividad $actividad',
+  ];
+
+  return 'Sin ficha de empaque: ${partes.join(' · ')}';
+}
+
 class SelectedActivitySummary extends StatelessWidget {
   const SelectedActivitySummary({
     required this.activity,
@@ -22492,7 +24520,7 @@ class AuthApi {
     return EmployeeSeguimientoResult.fromJson(body);
   }
 
-  Future<void> updateDailyVinetaRegistro(
+  Future<Map<String, dynamic>> updateDailyVinetaRegistro(
     String token, {
     required int registroId,
     required DateTime date,
@@ -22502,6 +24530,8 @@ class AuthApi {
     required String modoRegistro,
     required ActivityInfo activity,
     int? minutosTrabajados,
+    String? documentoNumero,
+    int? documentoEmpaqueId,
   }) async {
     final payload = <String, dynamic>{
       'fecha_registro': formatApiDate(date),
@@ -22529,6 +24559,13 @@ class AuthApi {
       payload['minutos_trabajados'] = minutosTrabajados;
     }
 
+    if (documentoNumero != null && documentoNumero.trim().isNotEmpty) {
+      payload['documento_numero'] = documentoNumero.trim();
+    }
+    if (documentoEmpaqueId != null && documentoEmpaqueId > 0) {
+      payload['documento_empaque_id'] = documentoEmpaqueId;
+    }
+
     final response = await _client.patch(
       apiUri('vineta-registros/$registroId'),
       headers: {
@@ -22541,6 +24578,8 @@ class AuthApi {
 
     final body = _decodeResponse(response);
     _throwIfFailed(response, body);
+
+    return body;
   }
 
   Future<EmployeeInfo> lookupEmployee(
@@ -22768,6 +24807,152 @@ class AuthApi {
     _throwIfFailed(response, body);
 
     return EmployeeWorkdayDistributionInfo.fromJson(body);
+  }
+
+  /// Boton "Aplicar ajuste de horas al ERP": deja el ERP con las horas del sistema.
+  Future<ApplyHoursErpResult> applyHoursToErp(
+    String token, {
+    required int employeeId,
+    required DateTime date,
+    String? grupo,
+    String? marca,
+    int? sucursal,
+    bool dryRun = false,
+  }) async {
+    final payload = <String, dynamic>{
+      'fecha': formatApiDate(date),
+      'dry_run': dryRun,
+    };
+    if (grupo != null && grupo.isNotEmpty) {
+      payload['grupo'] = grupo;
+    }
+    if (marca != null && marca.isNotEmpty) {
+      payload['marca'] = marca;
+    }
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
+    final response = await _client.post(
+      apiUri('empleados/$employeeId/horas-ordinarias/aplicar-erp'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(payload),
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return ApplyHoursErpResult.fromJson(body);
+  }
+
+  /// Aplica horas y puros al ERP buscando al empleado por código
+  /// (para aplicar por marca desde "Viñetas del empleado").
+  Future<ApplyHoursErpResult> applyHoursToErpByCode(
+    String token, {
+    required String empleadoCodigo,
+    required DateTime date,
+    String? grupo,
+    String? marca,
+    int? sucursal,
+    bool dryRun = false,
+  }) async {
+    final payload = <String, dynamic>{
+      'empleado_codigo': empleadoCodigo,
+      'fecha': formatApiDate(date),
+      'dry_run': dryRun,
+    };
+    if (grupo != null && grupo.isNotEmpty) {
+      payload['grupo'] = grupo;
+    }
+    if (marca != null && marca.isNotEmpty) {
+      payload['marca'] = marca;
+    }
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
+    final response = await _client.post(
+      apiUri('empleados/aplicar-erp'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(payload),
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return ApplyHoursErpResult.fromJson(body);
+  }
+
+  /// Aplica horas y puros al ERP para TODAS las viñetas de un documento.
+  Future<ApplyHoursErpResult> applyDocumentHoursToErp(
+    String token, {
+    required String documento,
+    required DateTime fecha,
+    int? sucursal,
+    bool dryRun = false,
+  }) async {
+    final payload = <String, dynamic>{
+      'fecha': formatApiDate(fecha),
+      'dry_run': dryRun,
+    };
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
+    final response = await _client.post(
+      apiUri('documentos-empaques/$documento/aplicar-horas-erp'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(payload),
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return ApplyHoursErpResult.fromJson(body);
+  }
+
+  /// Cambia el modo de pago de un documento completo (por hora / por tarea)
+  /// en el sistema y en el ERP. Si es por hora, deja las horas del ERP en 0.
+  Future<ChangeDocumentModeResult> changeDocumentMode(
+    String token, {
+    required String documento,
+    required String modo,
+    required DateTime fecha,
+    int? sucursal,
+    bool dryRun = false,
+  }) async {
+    final payload = <String, dynamic>{
+      'modo': modo,
+      'fecha': formatApiDate(fecha),
+      'dry_run': dryRun,
+    };
+    if (sucursal != null && sucursal > 0) {
+      payload['sucursal'] = sucursal;
+    }
+
+    final response = await _client.post(
+      apiUri('documentos-empaques/$documento/modo-pago'),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode(payload),
+    );
+
+    final body = _decodeResponse(response);
+    _throwIfFailed(response, body);
+
+    return ChangeDocumentModeResult.fromJson(body);
   }
 
   Future<void> deleteEmployeeWorkday(
@@ -23557,10 +25742,24 @@ class EmployeeSeguimientoActivitySummary {
     required this.tiempo,
     required this.monto,
     this.grupo,
+    this.item,
+    this.marca,
+    this.codigoProducto,
+    this.producto,
+    this.orden,
+    this.ordenDelSistema,
+    this.tipoEmpaque,
   });
 
   final String actividad;
   final String? grupo;
+  final String? item;
+  final String? marca;
+  final String? codigoProducto;
+  final String? producto;
+  final String? orden;
+  final String? ordenDelSistema;
+  final String? tipoEmpaque;
   final int registros;
   final int puros;
   final int cajones;
@@ -23569,12 +25768,33 @@ class EmployeeSeguimientoActivitySummary {
   final String tiempo;
   final double monto;
 
+  /// Linea de producto: para samplers (mismo item, varios codigos) muestra
+  /// el codigo de producto y la orden para que no se vean iguales.
+  String get productDetail {
+    return _joinRecordParts([
+      codigoProducto,
+      marca,
+      producto,
+      tipoEmpaque,
+      item == null ? null : 'Item $item',
+      ordenDelSistema == null ? null : 'ODS $ordenDelSistema',
+      orden == null ? null : 'Orden $orden',
+    ]);
+  }
+
   factory EmployeeSeguimientoActivitySummary.fromJson(
     Map<String, dynamic> json,
   ) {
     return EmployeeSeguimientoActivitySummary(
       actividad: _nullableString(json['actividad']) ?? 'Actividad',
       grupo: _nullableString(json['grupo']),
+      item: _nullableString(json['item']),
+      marca: _nullableString(json['marca']),
+      codigoProducto: _nullableString(json['codigo_producto']),
+      producto: _nullableString(json['producto']),
+      orden: _nullableString(json['orden']),
+      ordenDelSistema: _nullableString(json['orden_del_sistema']),
+      tipoEmpaque: _nullableString(json['tipo_empaque']),
       registros: _nullableInt(json['registros']) ?? 0,
       puros: _nullableInt(json['puros']) ?? 0,
       cajones: _nullableInt(json['cajones']) ?? 0,
@@ -24144,13 +26364,13 @@ class DailyWorkSummaryInfo {
 
   factory DailyWorkSummaryInfo.fromJson(Map<String, dynamic> json) {
     return DailyWorkSummaryInfo(
-      metaMinutos: _nullableInt(json['meta_minutos']) ?? 570,
-      metaTexto: _nullableString(json['meta_texto']) ?? '9 h 30 min',
+      metaMinutos: _nullableInt(json['meta_minutos']) ?? 720,
+      metaTexto: _nullableString(json['meta_texto']) ?? '12 h',
       totalActividades: _nullableInt(json['total_actividades']) ?? 0,
       totalMinutos: _nullableInt(json['total_minutos']) ?? 0,
       totalTexto: _nullableString(json['total_texto']) ?? '0 min',
-      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 570,
-      faltanteTexto: _nullableString(json['faltante_texto']) ?? '9 h 30 min',
+      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 720,
+      faltanteTexto: _nullableString(json['faltante_texto']) ?? '12 h',
       completado: json['completado'] as bool? ?? false,
       porcentaje: _nullableDouble(json['porcentaje']) ?? 0,
     );
@@ -24377,8 +26597,8 @@ class EmployeeHoursSummaryInfo {
 
   factory EmployeeHoursSummaryInfo.empty() {
     return const EmployeeHoursSummaryInfo(
-      metaMinutos: 570,
-      metaTexto: '9 h 30 min',
+      metaMinutos: 720,
+      metaTexto: '12 h',
       totalVinetas: 0,
       totalPuros: 0,
       totalActividades: 0,
@@ -24390,8 +26610,8 @@ class EmployeeHoursSummaryInfo {
       tiempoOrdinarioTexto: '0 min',
       totalMinutos: 0,
       totalTexto: '0 min',
-      faltanteMinutos: 570,
-      faltanteTexto: '9 h 30 min',
+      faltanteMinutos: 720,
+      faltanteTexto: '12 h',
       completado: false,
       porcentaje: 0,
     );
@@ -24399,8 +26619,8 @@ class EmployeeHoursSummaryInfo {
 
   factory EmployeeHoursSummaryInfo.fromJson(Map<String, dynamic> json) {
     return EmployeeHoursSummaryInfo(
-      metaMinutos: _nullableInt(json['meta_minutos']) ?? 570,
-      metaTexto: _nullableString(json['meta_texto']) ?? '9 h 30 min',
+      metaMinutos: _nullableInt(json['meta_minutos']) ?? 720,
+      metaTexto: _nullableString(json['meta_texto']) ?? '12 h',
       totalVinetas: _nullableInt(json['total_vinetas']) ?? 0,
       totalPuros: _nullableInt(json['total_puros']) ?? 0,
       totalActividades: _nullableInt(json['total_actividades']) ?? 0,
@@ -24420,8 +26640,8 @@ class EmployeeHoursSummaryInfo {
           _nullableString(json['tiempo_ordinario_texto']) ?? '0 min',
       totalMinutos: _nullableInt(json['total_minutos']) ?? 0,
       totalTexto: _nullableString(json['total_texto']) ?? '0 min',
-      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 570,
-      faltanteTexto: _nullableString(json['faltante_texto']) ?? '9 h 30 min',
+      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 720,
+      faltanteTexto: _nullableString(json['faltante_texto']) ?? '12 h',
       completado: json['completado'] as bool? ?? false,
       porcentaje: _nullableDouble(json['porcentaje']) ?? 0,
     );
@@ -24523,6 +26743,111 @@ class EmployeeWorkdayDistributionInfo {
       minutosDistribuidos: _nullableInt(json['minutos_distribuidos']) ?? 0,
       tiempoDistribuidoTexto:
           _nullableString(json['tiempo_distribuido_texto']) ?? '0 min',
+    );
+  }
+}
+
+class ApplyHoursErpResult {
+  const ApplyHoursErpResult({
+    required this.message,
+    required this.total,
+    required this.registros,
+    required this.aplicados,
+    required this.yaIguales,
+    required this.rechazados,
+    required this.errores,
+    required this.detalle,
+  });
+
+  final String message;
+  final int total;
+  final int registros;
+  final int aplicados;
+  final int yaIguales;
+  final int rechazados;
+  final int errores;
+  final List<String> detalle;
+
+  factory ApplyHoursErpResult.fromJson(Map<String, dynamic> json) {
+    final detalleRaw = json['detalle'];
+    final detalle = <String>[];
+
+    if (detalleRaw is List) {
+      for (final item in detalleRaw) {
+        if (item is Map<String, dynamic>) {
+          final estado = _nullableString(item['estado']) ?? '';
+          final mensaje = _nullableString(item['mensaje']) ?? '';
+          final doc = _nullableString(item['documento']) ?? '';
+          final horas = item['horas'];
+          final puros = item['puros'];
+          detalle.add(
+            '$doc ${horas ?? ''} h · ${puros ?? 0} puros: $estado'
+            '${mensaje.isEmpty ? '' : ' - $mensaje'}',
+          );
+        }
+      }
+    }
+
+    return ApplyHoursErpResult(
+      message: _nullableString(json['message']) ?? 'Ajuste aplicado.',
+      total: _nullableInt(json['total']) ?? 0,
+      registros: _nullableInt(json['registros']) ?? 0,
+      aplicados: _nullableInt(json['aplicados']) ?? 0,
+      yaIguales: _nullableInt(json['ya_iguales']) ?? 0,
+      rechazados: _nullableInt(json['rechazados']) ?? 0,
+      errores: _nullableInt(json['errores']) ?? 0,
+      detalle: detalle,
+    );
+  }
+}
+
+class ChangeDocumentModeResult {
+  const ChangeDocumentModeResult({
+    required this.message,
+    required this.documento,
+    required this.modo,
+    required this.registros,
+    required this.actualizados,
+    required this.erpOk,
+    required this.erpMessage,
+    required this.dryRun,
+  });
+
+  final String message;
+  final String documento;
+  final String modo;
+  final int registros;
+  final int actualizados;
+  final bool erpOk;
+  final String erpMessage;
+  final bool dryRun;
+
+  bool get porHora => modo == 'por_hora';
+
+  factory ChangeDocumentModeResult.fromJson(Map<String, dynamic> json) {
+    final erp = json['erp'];
+    var erpOk = false;
+    var erpMessage = '';
+
+    if (erp is Map<String, dynamic>) {
+      erpOk = erp['success'] == true;
+      erpMessage = _nullableString(erp['message']) ??
+          _nullableString(erp['error']) ??
+          '';
+    } else if (erp is Map) {
+      erpOk = erp['success'] == true;
+      erpMessage = _nullableString(erp['message']) ?? '';
+    }
+
+    return ChangeDocumentModeResult(
+      message: _nullableString(json['message']) ?? 'Modo cambiado.',
+      documento: _nullableString(json['documento']) ?? '',
+      modo: _nullableString(json['modo']) ?? '',
+      registros: _nullableInt(json['registros']) ?? 0,
+      actualizados: _nullableInt(json['actualizados']) ?? 0,
+      erpOk: erpOk,
+      erpMessage: erpMessage,
+      dryRun: json['dry_run'] == true,
     );
   }
 }
@@ -24898,6 +27223,8 @@ class VinetaInfo {
     this.estado,
     this.escaneadoEn,
     this.escaneadoEnTexto,
+    this.area,
+    this.areaTitulo,
   });
 
   final int id;
@@ -24918,6 +27245,11 @@ class VinetaInfo {
   final String? estado;
   final String? escaneadoEn;
   final String? escaneadoEnTexto;
+
+  /// 'LIMPIEZA' / 'BROCHA' cuando la viñeta se genero dentro de Empaque.
+  final String? area;
+  final String? areaTitulo;
+
   final bool impreso;
   final VinetaProcessInfo process;
 
@@ -24943,6 +27275,8 @@ class VinetaInfo {
       estado: json['estado'] as String?,
       escaneadoEn: json['escaneado_en'] as String?,
       escaneadoEnTexto: _nullableString(json['escaneado_en_texto']),
+      area: _nullableString(json['area']),
+      areaTitulo: _nullableString(json['area_titulo']),
       impreso: json['impreso'] as bool? ?? false,
       process: process is Map<String, dynamic>
           ? VinetaProcessInfo.fromJson(process)
