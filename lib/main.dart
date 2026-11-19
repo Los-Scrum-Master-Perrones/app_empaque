@@ -21,8 +21,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-const appVersionName = '2.1.23';
-const appBuildNumber = 2077;
+const appVersionName = '2.1.25';
+const appBuildNumber = 2079;
 
 const apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
