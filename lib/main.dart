@@ -1811,7 +1811,7 @@ class _LoginPageState extends State<LoginPage> {
                                         ),
                                         const SizedBox(height: 18),
                                         Text(
-                                          'Plasencia · Area de Empaque',
+                                          'Plasencia Â· Area de Empaque',
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
                                             color: palette.muted,
@@ -2313,7 +2313,7 @@ class AppUpdateInfo {
     final downloadUrl = (json['download_url'] as String?)?.trim() ?? '';
     final notes =
         (json['release_notes'] as String?)?.trim() ??
-        'Nueva versión disponible.';
+        'Nueva versiÃ³n disponible.';
     final force = json['force_update'] == true;
     final published = json['published_at'] as String?;
 
@@ -2403,7 +2403,7 @@ Future<AppUpdateInfo?> fetchAppUpdateInfo({http.Client? client}) async {
       return info;
     }
   } catch (e) {
-    debugPrint('Error al verificar actualización: $e');
+    debugPrint('Error al verificar actualizaciÃ³n: $e');
   } finally {
     if (client == null) httpClient.close();
   }
@@ -2414,7 +2414,7 @@ Future<void> openDownloadUrl(BuildContext context, String url) async {
   final uri = Uri.tryParse(url.trim());
   if (uri == null) {
     if (context.mounted) {
-      showAppMessage(context, 'URL de descarga inválida.');
+      showAppMessage(context, 'URL de descarga invÃ¡lida.');
     }
     return;
   }
@@ -2506,7 +2506,7 @@ class _AppNotificationSheetContentState
 
       if (response.statusCode >= 400) {
         throw Exception(
-          'El servidor respondió con código HTTP ${response.statusCode}',
+          'El servidor respondiÃ³ con cÃ³digo HTTP ${response.statusCode}',
         );
       }
 
@@ -2558,13 +2558,13 @@ class _AppNotificationSheetContentState
       final fileLength = await apkFile.length();
       if (fileLength < 1024 * 1024) {
         throw Exception(
-          'El archivo descargado está incompleto (${(fileLength / 1024).toStringAsFixed(1)} KB).',
+          'El archivo descargado estÃ¡ incompleto (${(fileLength / 1024).toStringAsFixed(1)} KB).',
         );
       }
 
-      // El APK debe empezar con "PK" (es un ZIP). Si el archivo se subió al
-      // servidor como texto (BOM/UTF-8) o vino una página de error, Android
-      // lo rechaza con "Se produjo un error durante el análisis".
+      // El APK debe empezar con "PK" (es un ZIP). Si el archivo se subiÃ³ al
+      // servidor como texto (BOM/UTF-8) o vino una pÃ¡gina de error, Android
+      // lo rechaza con "Se produjo un error durante el anÃ¡lisis".
       final header = await apkFile.openRead(0, 4).first;
       final esZip =
           header.length >= 2 && header[0] == 0x50 && header[1] == 0x4B;
@@ -2575,7 +2575,7 @@ class _AppNotificationSheetContentState
         } catch (_) {}
 
         throw Exception(
-          'El APK del servidor está dañado (no es un archivo válido). '
+          'El APK del servidor estÃ¡ daÃ±ado (no es un archivo vÃ¡lido). '
           'Avisa al administrador para que lo vuelva a subir en modo binario.',
         );
       }
@@ -2616,7 +2616,7 @@ class _AppNotificationSheetContentState
       );
 
       if (result.type != ResultType.done) {
-        // Si el instalador del sistema no pudo abrirse automáticamente, usar el navegador del teléfono como fallback
+        // Si el instalador del sistema no pudo abrirse automÃ¡ticamente, usar el navegador del telÃ©fono como fallback
         if (fallbackUrl != null && fallbackUrl.isNotEmpty) {
           final uri = Uri.tryParse(fallbackUrl);
           if (uri != null && await canLaunchUrl(uri)) {
@@ -2705,8 +2705,8 @@ class _AppNotificationSheetContentState
                       children: [
                         Text(
                           hasUpdate
-                              ? 'Actualización disponible'
-                              : 'Aplicación actualizada',
+                              ? 'ActualizaciÃ³n disponible'
+                              : 'AplicaciÃ³n actualizada',
                           style: TextStyle(
                             color: palette.text,
                             fontSize: 17,
@@ -2717,8 +2717,8 @@ class _AppNotificationSheetContentState
                         const SizedBox(height: 2),
                         Text(
                           hasUpdate
-                              ? 'Nueva versión v${update?.latestVersionName} (Build ${update?.latestVersionCode})'
-                              : 'Versión instalada: v$appVersionName (Build $appBuildNumber)',
+                              ? 'Nueva versiÃ³n v${update?.latestVersionName} (Build ${update?.latestVersionCode})'
+                              : 'VersiÃ³n instalada: v$appVersionName (Build $appBuildNumber)',
                           style: TextStyle(
                             color: palette.muted,
                             fontSize: 12.5,
@@ -2808,7 +2808,7 @@ class _AppNotificationSheetContentState
                 ] else if (_downloadedFilePath != null) ...[
                   FilledButton.icon(
                     icon: const Icon(Icons.install_mobile_rounded, size: 20),
-                    label: const Text('Instalar Actualización'),
+                    label: const Text('Instalar ActualizaciÃ³n'),
                     onPressed: () => _installApk(_downloadedFilePath!),
                   ),
                   const SizedBox(height: 8),
@@ -2861,7 +2861,7 @@ class _AppNotificationSheetContentState
                   ],
                 ],
               ] else ...[
-                // Estado al día
+                // Estado al dÃ­a
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -2883,7 +2883,7 @@ class _AppNotificationSheetContentState
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        '¡Tienes la versión más reciente!',
+                        'Â¡Tienes la versiÃ³n mÃ¡s reciente!',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.text,
@@ -2933,7 +2933,7 @@ class AppNotificationButton extends StatelessWidget {
           children: [
             IconButton(
               tooltip: hasUpdate
-                  ? '¡Actualización disponible!'
+                  ? 'Â¡ActualizaciÃ³n disponible!'
                   : 'Notificaciones y actualizaciones',
               onPressed: () => showAppNotificationSheet(context: context),
               icon: Icon(
@@ -3382,7 +3382,7 @@ class _FichaFaltanteSheetState extends State<_FichaFaltanteSheet> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Del 01/10 a hoy · ${_resumen.total} registro(s)',
+                      'Del 01/10 a hoy Â· ${_resumen.total} registro(s)',
                       style: TextStyle(
                         color: palette.muted,
                         fontSize: 12,
@@ -3558,7 +3558,7 @@ class _FichaFaltanteSheetState extends State<_FichaFaltanteSheet> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${item.fechaRegistro} · NO EXISTE FICHA',
+                          '${item.fechaRegistro} Â· NO EXISTE FICHA',
                           style: const TextStyle(
                             color: Color(0xFFDC2626),
                             fontSize: 11.5,
@@ -3777,7 +3777,7 @@ class _FichaActividadesSheetState extends State<_FichaActividadesSheet> {
                               ),
                               Text(
                                 '${actividad.registros} registro(s)'
-                                '${actividad.ignorada ? ' · oculta' : ''}',
+                                '${actividad.ignorada ? ' Â· oculta' : ''}',
                                 style: TextStyle(
                                   color: palette.muted,
                                   fontSize: 10.5,
@@ -3853,10 +3853,10 @@ class ThemeToggleButton extends StatelessWidget {
 
     final iconSize = compact ? 22.0 : 24.0;
 
-    // Iconos con sentido según el tema actual:
+    // Iconos con sentido segÃºn el tema actual:
     // Oscuro: Luna plateada
     // Claro: Sol en tono slate neutral (NO amarillo)
-    // Galaxy: Hermosa galaxia morada cósmica con núcleo brillante y brazos espirales
+    // Galaxy: Hermosa galaxia morada cÃ³smica con nÃºcleo brillante y brazos espirales
     final (iconWidget, tooltip) = switch (currentPref) {
       AppThemePreference.dark => (
         Icon(
@@ -3864,7 +3864,7 @@ class ThemeToggleButton extends StatelessWidget {
           color: const Color(0xFFCBD5E1),
           size: iconSize,
         ),
-        'Tema Oscuro • Toca para cambiar a Claro',
+        'Tema Oscuro â€¢ Toca para cambiar a Claro',
       ),
       AppThemePreference.light => (
         Icon(
@@ -3872,23 +3872,23 @@ class ThemeToggleButton extends StatelessWidget {
           color: const Color(0xFF334155),
           size: iconSize,
         ),
-        'Tema Claro • Toca para cambiar a Morado Galaxy',
+        'Tema Claro â€¢ Toca para cambiar a Morado Galaxy',
       ),
       AppThemePreference.galaxy => (
         _GalaxyThemeIconWidget(size: iconSize),
-        'Tema Morado Galaxy • Toca para cambiar a Escala de Grises',
+        'Tema Morado Galaxy â€¢ Toca para cambiar a Escala de Grises',
       ),
       AppThemePreference.monochrome => (
         _MonochromeThemeIconWidget(size: iconSize),
-        'Tema Escala de Grises • Toca para cambiar a Verde Elegante',
+        'Tema Escala de Grises â€¢ Toca para cambiar a Verde Elegante',
       ),
       AppThemePreference.emerald => (
         _EmeraldThemeIconWidget(size: iconSize),
-        'Tema Verde Elegante • Toca para cambiar a iOS Blanco',
+        'Tema Verde Elegante â€¢ Toca para cambiar a iOS Blanco',
       ),
       AppThemePreference.ios => (
         _IosThemeIconWidget(size: iconSize),
-        'Tema iOS Blanco • Toca para cambiar a Oscuro',
+        'Tema iOS Blanco â€¢ Toca para cambiar a Oscuro',
       ),
     };
 
@@ -3924,7 +3924,7 @@ class _GalaxyThemeIconPainter extends CustomPainter {
     canvas.rotate(-28 * math.pi / 180);
     canvas.scale(scale, scale);
 
-    // 1. Halo difuso galáctico
+    // 1. Halo difuso galÃ¡ctico
     final haloPaint = Paint()
       ..shader = ui.Gradient.radial(
         Offset.zero,
@@ -3965,7 +3965,7 @@ class _GalaxyThemeIconPainter extends CustomPainter {
       ..cubicTo(2.5, 4.4, 0.0, 3.5, -2.5, 2.5);
     canvas.drawPath(path1, arm1Paint);
 
-    // 3. Brazo espiral 2 (simétrico)
+    // 3. Brazo espiral 2 (simÃ©trico)
     final arm2Paint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.6
@@ -3989,7 +3989,7 @@ class _GalaxyThemeIconPainter extends CustomPainter {
       ..cubicTo(-2.5, -4.4, 0.0, -3.5, 2.5, -2.5);
     canvas.drawPath(path2, arm2Paint);
 
-    // 4. Núcleo central luminoso
+    // 4. NÃºcleo central luminoso
     final coreGlowPaint = Paint()
       ..color = const Color(0xFFC084FC).withValues(alpha: 0.85);
     canvas.drawOval(
@@ -4000,7 +4000,7 @@ class _GalaxyThemeIconPainter extends CustomPainter {
     final corePaint = Paint()..color = Colors.white;
     canvas.drawCircle(Offset.zero, 1.4, corePaint);
 
-    // 5. Partículas de polvo estelar cósmico
+    // 5. PartÃ­culas de polvo estelar cÃ³smico
     final starPaint = Paint()
       ..color = const Color(0xFFE9D5FF).withValues(alpha: 0.9);
     canvas.drawCircle(const Offset(7.5, -3.5), 0.65, starPaint);
@@ -4292,7 +4292,7 @@ extension HomeMenuSectionMeta on HomeMenuSection {
       HomeMenuSection.settings => 'Ajustes',
       HomeMenuSection.scan => 'Escanear',
       HomeMenuSection.records => 'Registros',
-      HomeMenuSection.statistics => 'Estadístico',
+      HomeMenuSection.statistics => 'EstadÃ­stico',
     };
   }
 }
@@ -4452,7 +4452,7 @@ class AdminMainHomeSection extends StatelessWidget {
                   AdminAccessItem(
                     icon: Icons.qr_code_2_rounded,
                     subtitle: 'Seguimiento',
-                    title: 'Seguimiento de viñeta',
+                    title: 'Seguimiento de viÃ±eta',
                     tone: 0,
                     onTap: () {
                       Navigator.of(context).push(
@@ -4485,7 +4485,7 @@ class AdminMainHomeSection extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'Registro de viñetas',
+                'Registro de viÃ±etas',
                 style: TextStyle(
                   color: palette.text,
                   fontSize: 17,
@@ -4498,7 +4498,7 @@ class AdminMainHomeSection extends StatelessWidget {
                 items: [
                   AdminAccessItem(
                     icon: Icons.qr_code_scanner_rounded,
-                    subtitle: 'Viñeta QR',
+                    subtitle: 'ViÃ±eta QR',
                     title: 'Escanear por QR',
                     tone: 0,
                     onTap: () {
@@ -4512,8 +4512,8 @@ class AdminMainHomeSection extends StatelessWidget {
                   ),
                   AdminAccessItem(
                     icon: Icons.tag_rounded,
-                    subtitle: 'Código viñeta',
-                    title: 'Buscar por código',
+                    subtitle: 'CÃ³digo viÃ±eta',
+                    title: 'Buscar por cÃ³digo',
                     tone: 1,
                     onTap: () {
                       Navigator.of(context).push(
@@ -4528,8 +4528,8 @@ class AdminMainHomeSection extends StatelessWidget {
                   ),
                   AdminAccessItem(
                     icon: Icons.dynamic_feed_rounded,
-                    subtitle: 'Viñetas',
-                    title: 'Escaneo múltiple',
+                    subtitle: 'ViÃ±etas',
+                    title: 'Escaneo mÃºltiple',
                     tone: 2,
                     onTap: () {
                       Navigator.of(context).push(
@@ -4823,8 +4823,8 @@ class ScanHomeSection extends StatelessWidget {
           index: 0,
           child: OperatorActionCard(
             icon: Icons.qr_code_scanner_rounded,
-            title: 'Escanear viñeta',
-            subtitle: 'Viñeta QR',
+            title: 'Escanear viÃ±eta',
+            subtitle: 'ViÃ±eta QR',
             tone: 0,
             trailingIcon: Icons.arrow_forward_rounded,
             onTap: () {
@@ -4847,8 +4847,8 @@ class ScanHomeSection extends StatelessWidget {
           index: 2,
           child: OperatorActionCard(
             icon: Icons.dynamic_feed_rounded,
-            title: 'Escaneo múltiple',
-            subtitle: 'Viñetas',
+            title: 'Escaneo mÃºltiple',
+            subtitle: 'ViÃ±etas',
             tone: 3,
             trailingIcon: Icons.arrow_forward_rounded,
             onTap: () {
@@ -5562,7 +5562,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
         mergedDocs.add(DailyRecordsActivityGroupOption(
           key: key,
-          label: displayText.isNotEmpty ? 'Doc. #$key · $displayText' : 'Doc. #$key',
+          label: displayText.isNotEmpty ? 'Doc. #$key Â· $displayText' : 'Doc. #$key',
           numero: key,
           descripcion: doc.descripcion,
           observaciones: doc.observaciones,
@@ -5691,10 +5691,10 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 720) {
+    if (totalMinutes <= 0 || totalMinutes > 570) {
       showAppMessage(
         context,
-        'Ingresa una jornada entre 1 minuto y 12 h.',
+        'Ingresa una jornada entre 1 minuto y 9 h 30.',
       );
       return;
     }
@@ -5741,7 +5741,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
       showAppMessage(
         context,
         failedEmployees == 0
-            ? 'Jornada aplicada a $updatedEmployees empleados de $_groupLabel en $updatedRecords viñetas.'
+            ? 'Jornada aplicada a $updatedEmployees empleados de $_groupLabel en $updatedRecords viÃ±etas.'
             : 'Jornada aplicada a $updatedEmployees empleados; $failedEmployees no pudieron actualizarse.',
         isError: failedEmployees > 0,
       );
@@ -5787,11 +5787,11 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
         title: const Text('Aplicar horas y puros al ERP'),
         content: Text(
           esDocumento
-              ? 'Se aplicará a TODAS las viñetas del documento $_groupKey '
+              ? 'Se aplicarÃ¡ a TODAS las viÃ±etas del documento $_groupKey '
                     'del ${formatWorkDate(_date)}.\n\n'
                     'Solo se cambian horas y puros. Los documentos ya aplicados '
                     'o anulados no se modifican.'
-              : 'Se aplicará a los ${employees.length} empleados de $_groupLabel '
+              : 'Se aplicarÃ¡ a los ${employees.length} empleados de $_groupLabel '
                     'del ${formatWorkDate(_date)}.\n\n'
                     'Solo se cambian horas y puros. Los documentos ya aplicados '
                     'o anulados no se modifican.',
@@ -5830,7 +5830,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
         showAppMessage(
           context,
-          '${result.message} (${result.total} filas, ${result.registros} viñetas)',
+          '${result.message} (${result.total} filas, ${result.registros} viÃ±etas)',
           isError: result.errores > 0,
         );
         await _load();
@@ -5911,7 +5911,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
         title: const Text('Pasar el documento a AL DIA'),
         content: Text(
           'Documento #$documento del ${formatWorkDate(_date)}.\n\n'
-          'Se pondran TODAS sus viñetas en modo por hora y el ERP quedara '
+          'Se pondran TODAS sus viÃ±etas en modo por hora y el ERP quedara '
           'como "Pago por hora trabajada" con las horas en 0.\n\n'
           'Despues, las horas ordinarias que se agreguen se sincronizan solas '
           'con el ERP. Los documentos ya aplicados o anulados no se modifican.',
@@ -5952,7 +5952,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
       setState(() {
         _modoPagoMensaje =
-            '${result.actualizados} viñetas en por hora. ERP: ${result.erpMessage}';
+            '${result.actualizados} viÃ±etas en por hora. ERP: ${result.erpMessage}';
         _modoPagoError = !result.erpOk;
       });
 
@@ -6011,10 +6011,10 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 720) {
+    if (totalMinutes <= 0 || totalMinutes > 570) {
       showAppMessage(
         context,
-        'Ingresa una jornada entre 1 minuto y 12 h.',
+        'Ingresa una jornada entre 1 minuto y 9 h 30.',
       );
       return;
     }
@@ -6117,7 +6117,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
     if (item == null) {
       showAppMessage(
         context,
-        'El empleado no tiene viñetas en los grupos del dia seleccionado.',
+        'El empleado no tiene viÃ±etas en los grupos del dia seleccionado.',
       );
       return;
     }
@@ -6194,7 +6194,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
             const SizedBox(height: 6),
             Text(
               'Si el documento es AL DIA (por hora), este boton pone todas sus '
-              'viñetas en por hora y deja el ERP como "Pago por hora trabajada" '
+              'viÃ±etas en por hora y deja el ERP como "Pago por hora trabajada" '
               'con las horas en 0. Las horas ordinarias que se agreguen despues '
               'se sincronizan solas con el ERP.',
               style: TextStyle(fontSize: 11, color: palette.muted, height: 1.35),
@@ -6347,7 +6347,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                         if (doc.total != null && doc.total! > 0) ...[
                           const SizedBox(width: 6),
                           Text(
-                            '· ${doc.total} puros',
+                            'Â· ${doc.total} puros',
                             style: TextStyle(
                               fontSize: 10.5,
                               fontWeight: FontWeight.w600,
@@ -6359,7 +6359,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              '· $secondaryDescription',
+                              'Â· $secondaryDescription',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -6665,7 +6665,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                     minutesController: _jornadaMinutesController,
                     saving: _savingJornada,
                     description:
-                        'Se aplicará a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)} entre sus viñetas.',
+                        'Se aplicarÃ¡ a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)} entre sus viÃ±etas.',
                     onSubmit: _saveGroupWorkday,
                     onApplyToErp: _applyAllToErp,
                     applyingToErp: _applyingErpAll,
@@ -6679,7 +6679,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                     saving: _savingJornada,
                     title: 'Agregar horas ordinarias global',
                     description:
-                        'Se agregará a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)}.',
+                        'Se agregarÃ¡ a los ${groupEmployees.length} empleados de $_groupLabel del ${formatWorkDate(_date)}.',
                     submitLabel: 'Agregar horas ordinarias a todos',
                     onSubmit: _saveGroupOrdinaryHour,
                   ),
@@ -6703,7 +6703,7 @@ class _EmployeeHoursSearchPageState extends State<EmployeeHoursSearchPage> {
                 const SizedBox(height: 18),
                 Text(
                   _search.trim().isEmpty
-                      ? 'No hay empleados con viñetas en este grupo para el dia seleccionado.'
+                      ? 'No hay empleados con viÃ±etas en este grupo para el dia seleccionado.'
                       : 'No hay empleados que coincidan con la busqueda.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
@@ -6923,7 +6923,7 @@ class EmployeeHoursAccordionCard extends StatelessWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${summary.totalVinetas} viñetas · ${summary.totalPuros} puros · ${summary.totalActividades} actividades',
+                              '${summary.totalVinetas} viÃ±etas Â· ${summary.totalPuros} puros Â· ${summary.totalActividades} actividades',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -7031,7 +7031,7 @@ extension EmployeeSeguimientoPeriodMeta on EmployeeSeguimientoPeriod {
   String get label => switch (this) {
     EmployeeSeguimientoPeriod.day => 'Dia',
     EmployeeSeguimientoPeriod.month => 'Mes',
-    EmployeeSeguimientoPeriod.year => 'Año',
+    EmployeeSeguimientoPeriod.year => 'AÃ±o',
   };
 }
 
@@ -7374,7 +7374,7 @@ class EmployeeSeguimientoHeaderCard extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'Top mensual de producción por área',
+                        'Top mensual de producciÃ³n por Ã¡rea',
                         style: TextStyle(
                           color: palette.muted,
                           fontSize: 11.5,
@@ -7775,14 +7775,14 @@ class EmployeeSeguimientoSearchCard extends StatelessWidget {
               onChanged: onChanged,
               onSubmitted: (_) => onSubmitted(),
               decoration: InputDecoration(
-                labelText: 'Buscar por código',
+                labelText: 'Buscar por cÃ³digo',
                 prefixIcon: const Icon(Icons.badge_rounded),
                 suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (hasText || employee != null)
                       IconButton(
-                        tooltip: 'Limpiar búsqueda',
+                        tooltip: 'Limpiar bÃºsqueda',
                         onPressed: onClear,
                         icon: const Icon(Icons.close_rounded),
                       ),
@@ -8295,7 +8295,7 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
         icon: Icons.leaderboard_rounded,
         title: 'Sin empleados en el ranking',
         message:
-            'No hay registros de producción para ${scope.label} en ${_monthName(date.month)} ${date.year}.',
+            'No hay registros de producciÃ³n para ${scope.label} en ${_monthName(date.month)} ${date.year}.',
       );
     }
 
@@ -8326,7 +8326,7 @@ class EmployeeSeguimientoEmployeeList extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Clasificación general',
+                      'ClasificaciÃ³n general',
                       style: TextStyle(
                         color: palette.text,
                         fontSize: 15,
@@ -8678,8 +8678,8 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         minutes < 0 ||
         minutes > 59 ||
         totalMinutes <= 0 ||
-        totalMinutes > 720) {
-      _showMessage('Ingresa un tiempo entre 1 minuto y 12 h.');
+        totalMinutes > 570) {
+      _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30.');
       return;
     }
 
@@ -8731,7 +8731,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Aplicar ajuste de horas al ERP'),
         content: Text(
-          'Se pondrán en el ERP las horas y los puros que tiene el sistema para '
+          'Se pondrÃ¡n en el ERP las horas y los puros que tiene el sistema para '
           '${widget.employee.nombre} el ${formatWorkDate(_date)} ($groupLabel), '
           'agrupado por documento + actividad + orden + empleado.\n\n'
           'Solo se cambian las horas y las cantidades de esa fila. '
@@ -8874,8 +8874,8 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
 
     final totalMinutes = (hours * 60) + minutePart;
 
-    if (totalMinutes <= 0 || totalMinutes > 720) {
-      _showMessage('Ingresa un tiempo entre 1 minuto y 12 h.');
+    if (totalMinutes <= 0 || totalMinutes > 570) {
+      _showMessage('Ingresa un tiempo entre 1 minuto y 9 h 30.');
       return;
     }
 
@@ -8999,7 +8999,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${item.registrosActualizados} viñetas con jornada distribuida',
+                  '${item.registrosActualizados} viÃ±etas con jornada distribuida',
                   style: TextStyle(color: palette.muted),
                 ),
                 const SizedBox(height: 14),
@@ -9093,10 +9093,10 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
                     minutes < 0 ||
                     minutes > 59 ||
                     total <= 0 ||
-                    total > 720) {
+                    total > 570) {
                   setDialogState(() {
                     validationError =
-                        'Ingresa un tiempo entre 1 min y 12 h.';
+                        'Ingresa un tiempo entre 1 min y 9 h 30.';
                   });
                   return;
                 }
@@ -9364,7 +9364,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
         ],
         const SizedBox(height: 12),
         EmployeeHoursSection(
-          title: 'Distribución de jornada laboral agregada',
+          title: 'DistribuciÃ³n de jornada laboral agregada',
           emptyText: 'Todavia no hay una jornada laboral distribuida.',
           children: result.jornadaLaboral == null
               ? const []
@@ -9385,7 +9385,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
                       key: ValueKey('employee-workday-${widget.employee.id}'),
                       title: result.jornadaLaboral!.tiempoDistribuidoTexto,
                       subtitle:
-                          '${result.jornadaLaboral!.registrosActualizados} viñetas distribuidas',
+                          '${result.jornadaLaboral!.registrosActualizados} viÃ±etas distribuidas',
                       trailing: 'Jornada',
                       onTap: () => _openWorkdayActions(result.jornadaLaboral!),
                     ),
@@ -9450,7 +9450,7 @@ class _EmployeeHoursPageState extends State<EmployeeHoursPage> {
           saving: _savingWorkday,
           description: result.jornadaLaboral != null
               ? 'Actualizar o redistribuir la jornada individual para ${widget.employee.nombre}.'
-              : 'Distribuir tiempo de jornada laboral individual para ${widget.employee.nombre} entre sus viñetas.',
+              : 'Distribuir tiempo de jornada laboral individual para ${widget.employee.nombre} entre sus viÃ±etas.',
           onSubmit: _saveIndividualWorkday,
           onApplyToErp: _applyHoursToErp,
           applyingToErp: _applyingErp,
@@ -9489,7 +9489,7 @@ class EmployeeHoursEmployeeCard extends StatelessWidget {
     final meta = [
       employee.cargo,
       employee.area,
-    ].where((value) => value != null && value.trim().isNotEmpty).join(' · ');
+    ].where((value) => value != null && value.trim().isNotEmpty).join(' Â· ');
 
     return Card(
       elevation: 0,
@@ -9620,7 +9620,7 @@ class EmployeeHoursSummaryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _EmployeeHoursSummaryMetric(
-                    label: 'Viñetas',
+                    label: 'ViÃ±etas',
                     value: summary.totalVinetas.toString(),
                   ),
                 ),
@@ -9645,7 +9645,7 @@ class EmployeeHoursSummaryCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: _EmployeeHoursSummaryMetric(
-                    label: 'En viñetas',
+                    label: 'En viÃ±etas',
                     value: summary.tiempoVinetasTexto,
                   ),
                 ),
@@ -10593,8 +10593,8 @@ class _RecordsHomeSectionState extends State<RecordsHomeSection> {
                 sliver: SliverToBoxAdapter(
                   child: Text(
                     hasEmployeeSearch
-                        ? 'No hay empleados con ese código.'
-                        : 'No hay empleados con viñetas escaneadas para este día.',
+                        ? 'No hay empleados con ese cÃ³digo.'
+                        : 'No hay empleados con viÃ±etas escaneadas para este dÃ­a.',
                     style: TextStyle(
                       color: palette.muted,
                       fontSize: 12,
@@ -11216,7 +11216,7 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo cargar el estadístico.';
+        _error = 'No se pudo cargar el estadÃ­stico.';
       });
     } finally {
       if (mounted) {
@@ -11285,7 +11285,7 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
         ShareParams(
           files: [XFile(file.path, mimeType: 'image/png')],
           fileNameOverrides: [fileName],
-          text: 'Estadístico de puros ${formatWorkDate(_date)}',
+          text: 'EstadÃ­stico de puros ${formatWorkDate(_date)}',
         ),
       );
     } catch (_) {
@@ -11346,7 +11346,7 @@ class _StatisticsHomeSectionState extends State<StatisticsHomeSection> {
             child: FloatingActionButton(
               onPressed: _sharing ? null : _shareReportImage,
               elevation: 4,
-              tooltip: 'Compartir estadístico',
+              tooltip: 'Compartir estadÃ­stico',
               backgroundColor: palette.isMonochrome
                   ? palette.primary
                   : (palette.isDark
@@ -11507,7 +11507,7 @@ class DailyRecordsStatisticsReport extends StatelessWidget {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Estadístico diario',
+                              'EstadÃ­stico diario',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -12011,7 +12011,7 @@ class _DailyRecordsEmployeeRecordsPageState
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Esta marca no tiene nombre; aplica desde el botón del empleado.',
+            'Esta marca no tiene nombre; aplica desde el botÃ³n del empleado.',
           ),
         ),
       );
@@ -12129,7 +12129,7 @@ class _DailyRecordsEmployeeRecordsPageState
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudieron cargar las viñetas del empleado.';
+        _error = 'No se pudieron cargar las viÃ±etas del empleado.';
       });
     } finally {
       if (mounted) {
@@ -12173,7 +12173,7 @@ class _DailyRecordsEmployeeRecordsPageState
     return Scaffold(
       backgroundColor: palette.scaffold,
       appBar: AppBar(
-        title: const Text('Viñetas del empleado'),
+        title: const Text('ViÃ±etas del empleado'),
         leading: IconButton(
           tooltip: 'Volver',
           onPressed: _close,
@@ -12198,7 +12198,7 @@ class _DailyRecordsEmployeeRecordsPageState
               const SizedBox(height: 10),
               if (_records.isEmpty)
                 Text(
-                  'No hay viñetas escaneadas para este empleado.',
+                  'No hay viÃ±etas escaneadas para este empleado.',
                   style: TextStyle(
                     color: palette.muted,
                     fontSize: 12,
@@ -12284,7 +12284,7 @@ class DailyRecordsProductGroup {
 
   String get meta {
     return _joinRecordParts([
-      _dailyRecordsGroupMetaPart('Código', first.producto.codigoProducto),
+      _dailyRecordsGroupMetaPart('CÃ³digo', first.producto.codigoProducto),
       _dailyRecordsGroupMetaPart('Item', first.producto.item),
       _dailyRecordsGroupMetaPart('Capa', first.producto.capa),
       _dailyRecordsGroupMetaPart('ODS', first.ordenDelSistema),
@@ -12414,7 +12414,7 @@ class DailyRecordsProductGroupCard extends StatelessWidget {
     final descripcion = group.descripcionProducto;
     final itemEmpaque = group.itemEmpaque;
     final ordenes = group.ordenes;
-    final vinetasLabel = group.records.length == 1 ? 'viñeta' : 'viñetas';
+    final vinetasLabel = group.records.length == 1 ? 'viÃ±eta' : 'viÃ±etas';
     final actividadesLabel = group.totalActividades == 1
         ? 'actividad'
         : 'actividades';
@@ -12674,7 +12674,7 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Empleados con viñetas escaneadas',
+                    'Empleados con viÃ±etas escaneadas',
                     style: TextStyle(
                       color: palette.text,
                       fontSize: 15,
@@ -12706,14 +12706,14 @@ class DailyRecordsEmployeeListCard extends StatelessWidget {
               textInputAction: TextInputAction.search,
               onChanged: onSearchChanged,
               decoration: InputDecoration(
-                labelText: 'Buscar por código',
+                labelText: 'Buscar por cÃ³digo',
                 prefixIcon: const Icon(Icons.badge_rounded),
                 suffixIcon: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (hasSearch)
                       IconButton(
-                        tooltip: 'Limpiar búsqueda',
+                        tooltip: 'Limpiar bÃºsqueda',
                         onPressed: () {
                           controller.clear();
                           onSearchChanged('');
@@ -12800,7 +12800,7 @@ class DailyRecordsTotalPurosCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Total del día',
+                        'Total del dÃ­a',
                         style: TextStyle(
                           color: palette.text,
                           fontSize: 14,
@@ -12809,7 +12809,7 @@ class DailyRecordsTotalPurosCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '$activityGroupLabel · ${formatWorkDate(date)}',
+                        '$activityGroupLabel Â· ${formatWorkDate(date)}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -13050,7 +13050,7 @@ class DailyRecordsSubGroupTabs extends StatelessWidget {
                   selected: selected,
                   onSelected: (_) => onChanged(option.key),
                   label: Text(
-                    '${option.label} · $count',
+                    '${option.label} Â· $count',
                     style: TextStyle(
                       color: selected ? activeColor : palette.muted,
                       fontSize: 11.0,
@@ -13197,7 +13197,7 @@ class DailyRecordsEmployeeTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Código ${summary.displayCode}',
+                      'CÃ³digo ${summary.displayCode}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -13321,7 +13321,7 @@ class DailyRecordsEmployeeDetailHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Viñetas del empleado',
+                    'ViÃ±etas del empleado',
                     style: TextStyle(
                       color: palette.muted,
                       fontSize: 11.5,
@@ -13340,7 +13340,7 @@ class DailyRecordsEmployeeDetailHeader extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Código $code · $count escaneadas',
+                    'CÃ³digo $code Â· $count escaneadas',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -13416,7 +13416,7 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '$groupLabel · Código ${summary.displayCode} · ${formatWorkDate(date)}',
+              '$groupLabel Â· CÃ³digo ${summary.displayCode} Â· ${formatWorkDate(date)}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -13433,7 +13433,7 @@ class _EmployeeRecordPageHeader extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${formatIntegerWithCommas(summary.totalActividades)} actividades · ${summary.records.length} viñetas',
+                        '${formatIntegerWithCommas(summary.totalActividades)} actividades Â· ${summary.records.length} viÃ±etas',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -13513,7 +13513,7 @@ class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Viñetas escaneadas',
+                    'ViÃ±etas escaneadas',
                     style: TextStyle(
                       color: palette.text,
                       fontSize: 15,
@@ -13533,7 +13533,7 @@ class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              'Toca Editar en una viñeta para actualizar sus datos.',
+              'Toca Editar en una viÃ±eta para actualizar sus datos.',
               style: TextStyle(
                 color: palette.muted,
                 fontSize: 12,
@@ -13543,7 +13543,7 @@ class DailyRecordsEmployeeRecordListCard extends StatelessWidget {
             const SizedBox(height: 10),
             if (records.isEmpty)
               Text(
-                'No hay viñetas escaneadas para este empleado.',
+                'No hay viÃ±etas escaneadas para este empleado.',
                 style: TextStyle(
                   color: palette.muted,
                   fontSize: 12,
@@ -13748,7 +13748,7 @@ String _safeRecordVineta(DailyVinetaRegistroInfo record) {
 
   final id = record.vinetaId;
 
-  return id == null ? 'Viñeta' : 'Viñeta $id';
+  return id == null ? 'ViÃ±eta' : 'ViÃ±eta $id';
 }
 
 String _safeRecordProductTitle(DailyVinetaRegistroInfo record) {
@@ -13785,7 +13785,7 @@ String _safeRecordProductMeta(DailyVinetaRegistroInfo record) {
     }
   }
 
-  return parts.isEmpty ? 'Sin detalle de producto' : parts.join(' · ');
+  return parts.isEmpty ? 'Sin detalle de producto' : parts.join(' Â· ');
 }
 
 String _safeRecordActivity(DailyVinetaRegistroInfo record) {
@@ -13799,7 +13799,7 @@ String _safeRecordActivity(DailyVinetaRegistroInfo record) {
     }
   }
 
-  return parts.isEmpty ? 'Actividad' : parts.join(' · ');
+  return parts.isEmpty ? 'Actividad' : parts.join(' Â· ');
 }
 
 String _safeRecordRegistered(DailyVinetaRegistroInfo record) {
@@ -13897,7 +13897,7 @@ class DailyRecordsListCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Viñetas escaneadas',
+                    'ViÃ±etas escaneadas',
                     style: TextStyle(
                       color: palette.text,
                       fontSize: 15,
@@ -13927,7 +13927,7 @@ class DailyRecordsListCard extends StatelessWidget {
             const SizedBox(height: 10),
             if (records.isEmpty)
               Text(
-                'No hay viñetas escaneadas para este dia.',
+                'No hay viÃ±etas escaneadas para este dia.',
                 style: TextStyle(
                   color: palette.muted,
                   fontSize: 12,
@@ -14458,7 +14458,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
                     ),
                     subtitle: Text(
                       _documentoDetalle(doc).isEmpty
-                          ? 'Sin descripción'
+                          ? 'Sin descripciÃ³n'
                           : _documentoDetalle(doc),
                       maxLines: 5,
                       overflow: TextOverflow.ellipsis,
@@ -14621,9 +14621,9 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
       return;
     }
 
-    if (!porHora && (minutes == null || minutes < 0 || minutes > 720)) {
+    if (!porHora && (minutes == null || minutes < 0 || minutes > 570)) {
       setState(() {
-        _error = 'Ingresa minutos entre 0 y 720.';
+        _error = 'Ingresa minutos entre 0 y 570.';
       });
       return;
     }
@@ -14683,7 +14683,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
       } else if (erpAjuste is Map && erpAjuste['success'] == true) {
         avisoErp = (erpAjuste['cambiado'] == true)
             ? 'Horas/puros actualizados en el ERP.'
-            : 'El ERP ya estaba igual (no se cambió).';
+            : 'El ERP ya estaba igual (no se cambiÃ³).';
       } else if ((_documentoNumero ?? '').trim().isEmpty) {
         avisoErp = 'Solo en el sistema (sin documento, no va al ERP).';
       } else {
@@ -14729,7 +14729,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
     final activityMeta = [
       selectedActivity?.codigoActividad,
       selectedActivity?.tipoEmpaque,
-    ].where((value) => value != null && value.trim().isNotEmpty).join(' · ');
+    ].where((value) => value != null && value.trim().isNotEmpty).join(' Â· ');
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
@@ -14750,7 +14750,7 @@ class _DailyRecordEditSheetState extends State<DailyRecordEditSheet> {
               ),
               const SizedBox(height: 4),
               Text(
-                '${record.vinetaLabel} · ${record.productTitle}',
+                '${record.vinetaLabel} Â· ${record.productTitle}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -15315,7 +15315,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Tema de la aplicación',
+                            'Tema de la aplicaciÃ³n',
                             style: TextStyle(
                               color: palette.text,
                               fontSize: 15,
@@ -15650,7 +15650,7 @@ class _SettingsHomeSectionState extends State<SettingsHomeSection> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Versión de la aplicación',
+                        'VersiÃ³n de la aplicaciÃ³n',
                         style: TextStyle(
                           color: palette.text,
                           fontSize: 15,
@@ -15968,7 +15968,7 @@ class AppScaffold extends StatelessWidget {
             compact: true,
           ),
           IconButton(
-            tooltip: 'Cerrar sesión',
+            tooltip: 'Cerrar sesiÃ³n',
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded, size: 22),
             color: isDark
@@ -16382,16 +16382,16 @@ class _ProfilePhotoSheetState extends State<_ProfilePhotoSheet> {
           ] else ...[
             _PhotoActionTile(
               icon: Icons.camera_alt_rounded,
-              title: 'Tomar fotografía',
-              subtitle: 'Abrir la cámara del dispositivo',
+              title: 'Tomar fotografÃ­a',
+              subtitle: 'Abrir la cÃ¡mara del dispositivo',
               tone: palette.primary,
               onTap: () => _pickAndUpload(ImageSource.camera),
             ),
             const SizedBox(height: 10),
             _PhotoActionTile(
               icon: Icons.photo_library_rounded,
-              title: 'Seleccionar de la galería',
-              subtitle: 'Elegir una foto guardada en tu teléfono',
+              title: 'Seleccionar de la galerÃ­a',
+              subtitle: 'Elegir una foto guardada en tu telÃ©fono',
               tone: const Color(0xFF0284C7),
               onTap: () => _pickAndUpload(ImageSource.gallery),
             ),
@@ -16855,7 +16855,7 @@ class _InlineVinetaCodeSearchCardState
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo consultar la viñeta.';
+        _error = 'No se pudo consultar la viÃ±eta.';
       });
     } finally {
       if (mounted) {
@@ -16890,7 +16890,7 @@ class _InlineVinetaCodeSearchCardState
                       labelText: 'Codigo API',
                       prefixIcon: const Icon(Icons.numbers_rounded),
                       suffixIcon: IconButton(
-                        tooltip: 'Buscar viñeta',
+                        tooltip: 'Buscar viÃ±eta',
                         onPressed: _loading ? null : _search,
                         icon: _loading
                             ? const SizedBox(
@@ -16907,7 +16907,7 @@ class _InlineVinetaCodeSearchCardState
                       final code = value?.trim() ?? '';
 
                       if (code.isEmpty) {
-                        return 'Ingresa el codigo de la viñeta.';
+                        return 'Ingresa el codigo de la viÃ±eta.';
                       }
 
                       if (!RegExp(r'^\d+$').hasMatch(code)) {
@@ -16927,7 +16927,7 @@ class _InlineVinetaCodeSearchCardState
           : OperatorActionCard(
               icon: Icons.tag_outlined,
               title: 'Buscar por codigo',
-              subtitle: 'Codigo viñeta',
+              subtitle: 'Codigo viÃ±eta',
               tone: 1,
               iconOnLeft: true,
               onTap: _expand,
@@ -17084,7 +17084,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
     final palette = appPalette(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Seguimiento de viñeta')),
+      appBar: AppBar(title: const Text('Seguimiento de viÃ±eta')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(8, 18, 8, 28),
@@ -17121,7 +17121,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Buscar viñeta',
+                                'Buscar viÃ±eta',
                                 style: TextStyle(
                                   color: palette.text,
                                   fontSize: 18,
@@ -17130,7 +17130,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Busca por código o escanea el QR en esta pantalla.',
+                                'Busca por cÃ³digo o escanea el QR en esta pantalla.',
                                 style: TextStyle(
                                   color: palette.muted,
                                   fontSize: 12.5,
@@ -17151,7 +17151,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
                         textInputAction: TextInputAction.search,
                         onFieldSubmitted: (_) => _search(),
                         decoration: const InputDecoration(
-                          labelText: 'Código o ID de viñeta',
+                          labelText: 'CÃ³digo o ID de viÃ±eta',
                           hintText: 'Ej. 8052 o QR',
                           prefixIcon: Icon(Icons.tag_rounded),
                         ),
@@ -17159,7 +17159,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
                           final code = value?.trim() ?? '';
 
                           if (code.isEmpty) {
-                            return 'Ingresa o escanea la viñeta.';
+                            return 'Ingresa o escanea la viÃ±eta.';
                           }
 
                           return null;
@@ -17177,7 +17177,7 @@ class _VinetaSeguimientoPageState extends State<VinetaSeguimientoPage> {
                             : Icons.qr_code_scanner_rounded,
                       ),
                       label: Text(
-                        _scannerOpen ? 'Cerrar escáner' : 'Escanear QR',
+                        _scannerOpen ? 'Cerrar escÃ¡ner' : 'Escanear QR',
                       ),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
@@ -17324,7 +17324,7 @@ class VinetaSeguimientoInlineScanner extends StatelessWidget {
                       child: Text(
                         processing
                             ? 'Consultando seguimiento...'
-                            : 'Apunta la cámara al QR de la viñeta.',
+                            : 'Apunta la cÃ¡mara al QR de la viÃ±eta.',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -17446,11 +17446,11 @@ class VinetaSeguimientoSummaryCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 VinetaSeguimientoChip(
-                  label: 'Fecha viñeta',
+                  label: 'Fecha viÃ±eta',
                   value: formatApiDateDisplay(vineta.fecha),
                 ),
                 VinetaSeguimientoChip(
-                  label: 'Código',
+                  label: 'CÃ³digo',
                   value: vineta.codigoProducto ?? 'N/A',
                 ),
                 VinetaSeguimientoChip(
@@ -17549,7 +17549,7 @@ class VinetaSeguimientoTimeline extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Línea de tiempo',
+                    'LÃ­nea de tiempo',
                     style: TextStyle(
                       color: palette.text,
                       fontSize: 16,
@@ -17578,7 +17578,7 @@ class VinetaSeguimientoTimeline extends StatelessWidget {
                   border: Border.all(color: palette.border),
                 ),
                 child: Text(
-                  'Esta viñeta existe para esa fecha, pero todavía no tiene movimientos registrados.',
+                  'Esta viÃ±eta existe para esa fecha, pero todavÃ­a no tiene movimientos registrados.',
                   style: TextStyle(color: palette.muted, fontSize: 13),
                 ),
               )
@@ -17704,7 +17704,7 @@ class VinetaSeguimientoStepTile extends StatelessWidget {
                           isAnulado
                               ? 'Anulado'
                               : isLast
-                              ? 'Último'
+                              ? 'Ãšltimo'
                               : 'Completado',
                           style: TextStyle(
                             color: accent,
@@ -17883,7 +17883,7 @@ class _VinetaScannerPageState extends State<VinetaScannerPage> {
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo consultar la viñeta.';
+        _error = 'No se pudo consultar la viÃ±eta.';
         _processing = false;
       });
     }
@@ -17946,7 +17946,7 @@ class _VinetaScannerPageState extends State<VinetaScannerPage> {
                       CircularProgressIndicator(color: palette.primary),
                       const SizedBox(height: 12),
                       Text(
-                        'Consultando viñeta...',
+                        'Consultando viÃ±eta...',
                         style: TextStyle(
                           color: palette.text,
                           fontWeight: FontWeight.w700,
@@ -17961,7 +17961,7 @@ class _VinetaScannerPageState extends State<VinetaScannerPage> {
                       ),
                     ] else
                       Text(
-                        'Apunta la camara al QR de la viñeta.',
+                        'Apunta la camara al QR de la viÃ±eta.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: palette.text,
@@ -18210,7 +18210,7 @@ class _VinetaCodeSearchPageState extends State<VinetaCodeSearchPage> {
       if (!mounted) return;
 
       setState(() {
-        _error = 'No se pudo consultar la viñeta.';
+        _error = 'No se pudo consultar la viÃ±eta.';
       });
     } finally {
       if (mounted) {
@@ -18226,13 +18226,13 @@ class _VinetaCodeSearchPageState extends State<VinetaCodeSearchPage> {
     final palette = appPalette(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Buscar viñeta')),
+      appBar: AppBar(title: const Text('Buscar viÃ±eta')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(8, 20, 8, 20),
           children: [
             Text(
-              'Codigo API de la viñeta',
+              'Codigo API de la viÃ±eta',
               style: TextStyle(
                 color: palette.text,
                 fontSize: 22,
@@ -18241,7 +18241,7 @@ class _VinetaCodeSearchPageState extends State<VinetaCodeSearchPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Ingresa el codigo API que aparece asociado a la viñeta.',
+              'Ingresa el codigo API que aparece asociado a la viÃ±eta.',
               style: TextStyle(color: palette.muted),
             ),
             const SizedBox(height: 20),
@@ -18261,7 +18261,7 @@ class _VinetaCodeSearchPageState extends State<VinetaCodeSearchPage> {
                   final code = value?.trim() ?? '';
 
                   if (code.isEmpty) {
-                    return 'Ingresa el codigo de la viñeta.';
+                    return 'Ingresa el codigo de la viÃ±eta.';
                   }
 
                   if (!RegExp(r'^\d+$').hasMatch(code)) {
@@ -18448,10 +18448,10 @@ String _completedProcessMessage(VinetaProcessStepInfo step) {
   final details = [
     if (employee != null && employee.isNotEmpty) employee,
     if (date != null && date.isNotEmpty) date,
-  ].join(' · ');
+  ].join(' Â· ');
 
   return details.isEmpty
-      ? '${step.label} ya esta registrado para esta viñeta.'
+      ? '${step.label} ya esta registrado para esta viÃ±eta.'
       : '${step.label} ya esta registrado: $details.';
 }
 
@@ -18501,8 +18501,8 @@ ActivityInfo? _bestMultiScanActivityMatch(
     }
   }
 
-  // La API entrega las actividades activas ordenadas por el escaneo más reciente primero (ultimo_escaneo_en DESC).
-  // Por lo tanto, la primera actividad en filteredActivities es la actividad escaneada más reciente para este grupo.
+  // La API entrega las actividades activas ordenadas por el escaneo mÃ¡s reciente primero (ultimo_escaneo_en DESC).
+  // Por lo tanto, la primera actividad en filteredActivities es la actividad escaneada mÃ¡s reciente para este grupo.
   return filteredActivities.firstOrNull;
 }
 
@@ -18559,14 +18559,14 @@ String? multiScanActivityErrorForProcess(
       final details = [
         if (employee != null && employee.isNotEmpty) employee,
         if (date != null && date.isNotEmpty) date,
-      ].join(' · ');
+      ].join(' Â· ');
 
       final activityName = matchingActivity.nombre.isNotEmpty
           ? matchingActivity.nombre
           : (activity.nombre ?? 'Llenado');
 
       return details.isEmpty
-          ? 'La actividad "$activityName" ya esta registrada para esta viñeta.'
+          ? 'La actividad "$activityName" ya esta registrada para esta viÃ±eta.'
           : 'La actividad "$activityName" ya esta registrada: $details.';
     }
 
@@ -18657,11 +18657,11 @@ int? _parseHoursToMinutes(String value) {
   return (hours * 60).round();
 }
 
-/// Reparte [totalMinutes] entre las viñetas proporcionalmente a sus puros.
+/// Reparte [totalMinutes] entre las viÃ±etas proporcionalmente a sus puros.
 ///
 /// Trabaja en cuartos de hora (15 min): todos los valores quedan en multiplos
 /// de 0.25 h (0.25, 0.5, 0.75, 1, 1.25, 1.5, ...). El minimo es 1 cuarto
-/// (0.25 h); la diferencia se resta a la viñeta con mas cuartos, de modo que
+/// (0.25 h); la diferencia se resta a la viÃ±eta con mas cuartos, de modo que
 /// la suma total no cambie.
 List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
   final count = puros.length;
@@ -18671,7 +18671,7 @@ List<int> _splitMinutesByPuros(int totalMinutes, List<int> puros) {
   }
 
   // Se reparte EXACTAMENTE lo pedido, en MINUTOS enteros (no en cuartos):
-  // asi ninguna viñeta queda en 0 y el total no sube ni baja.
+  // asi ninguna viÃ±eta queda en 0 y el total no sube ni baja.
   final totalMin = totalMinutes < 0 ? 0 : totalMinutes;
 
   final totalPuros = puros.fold<int>(
@@ -19291,7 +19291,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
     await _agregarPorCodigo(normalizedCode);
   }
 
-  /// Agrega una viñeta por CODIGO (escaneo o escrito a mano). Todo el alta es
+  /// Agrega una viÃ±eta por CODIGO (escaneo o escrito a mano). Todo el alta es
   /// el mismo camino: mismo key, misma actividad y misma validacion.
   Future<void> _agregarPorCodigo(String normalizedCode) async {
     final employee = _employee;
@@ -19319,7 +19319,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
       if (_entries.any((entry) => entry.key == key)) {
         setState(() {
-          _scanNotice = 'Esta viñeta ya esta en la lista.';
+          _scanNotice = 'Esta viÃ±eta ya esta en la lista.';
         });
         return;
       }
@@ -19455,8 +19455,8 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       setState(() {
         _entries = [..._entries, entry];
         _scanNotice = entryError == null
-            ? 'Viñeta agregada.'
-            : 'Viñeta agregada. Revisa la actividad.';
+            ? 'ViÃ±eta agregada.'
+            : 'ViÃ±eta agregada. Revisa la actividad.';
       });
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -19468,7 +19468,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       if (!mounted) return;
 
       setState(() {
-        _scanError = 'No se pudo consultar la viñeta.';
+        _scanError = 'No se pudo consultar la viÃ±eta.';
       });
     } finally {
       if (mounted) {
@@ -19486,7 +19486,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
 
     if (code.isEmpty) {
       setState(() {
-        _scanError = 'Ingresa el código de la viñeta.';
+        _scanError = 'Ingresa el cÃ³digo de la viÃ±eta.';
       });
       return;
     }
@@ -19731,7 +19731,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
         .toList(growable: false);
 
     if (pendingEntries.isEmpty) {
-      _showMessage('No hay viñetas pendientes por guardar.');
+      _showMessage('No hay viÃ±etas pendientes por guardar.');
       return;
     }
 
@@ -19750,7 +19750,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
       }
 
       if (parsedMinutes > 0 && parsedMinutes < pendingEntries.length) {
-        _showMessage('La hora total debe dejar al menos 1 minuto por viñeta.');
+        _showMessage('La hora total debe dejar al menos 1 minuto por viÃ±eta.');
         return;
       }
 
@@ -20200,7 +20200,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                         ),
                       ),
                       Text(
-                        '${employee.codigo} · ${formatWorkDate(_scanDateTime)}',
+                        '${employee.codigo} Â· ${formatWorkDate(_scanDateTime)}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -20645,7 +20645,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              '· $secondaryDescription',
+                              'Â· $secondaryDescription',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
@@ -21035,7 +21035,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                   ),
                 ),
               ),
-              // Código manual: si el QR no se puede escanear, se escribe.
+              // CÃ³digo manual: si el QR no se puede escanear, se escribe.
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
@@ -21047,7 +21047,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                         onSubmitted: (_) => _agregarManual(),
                         decoration: InputDecoration(
                           isDense: true,
-                          hintText: 'Código de la viñeta (ej. 12345, li-1)',
+                          hintText: 'CÃ³digo de la viÃ±eta (ej. 12345, li-1)',
                           hintStyle: const TextStyle(fontSize: 12),
                           contentPadding: const EdgeInsets.symmetric(
                             horizontal: 10,
@@ -21264,7 +21264,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                 const SizedBox(width: 7),
                 Expanded(
                   child: Text(
-                    'Viñetas escaneadas',
+                    'ViÃ±etas escaneadas',
                     style: TextStyle(
                       color: palette.text,
                       fontSize: 13,
@@ -21276,7 +21276,7 @@ class _MultiVinetaScanPageState extends State<MultiVinetaScanPage> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '$pendingCount pendientes · $savedCount guardadas',
+                      '$pendingCount pendientes Â· $savedCount guardadas',
                       style: TextStyle(
                         color: palette.muted,
                         fontSize: 11,
@@ -21421,7 +21421,7 @@ class _MultiVinetaEntry {
       vineta.item == null ? null : 'Item ${vineta.item}',
       vineta.codigoProducto,
       vineta.tipoEmpaque,
-    ].where((value) => value != null && value.trim().isNotEmpty).join(' · ');
+    ].where((value) => value != null && value.trim().isNotEmpty).join(' Â· ');
   }
 }
 
@@ -21630,7 +21630,7 @@ class _MultiVinetaEntryTileState extends State<_MultiVinetaEntryTile> {
                   : widget.onActivitySearch,
               child: InputDecorator(
                 decoration: const InputDecoration(
-                  labelText: 'Actividad de esta viñeta',
+                  labelText: 'Actividad de esta viÃ±eta',
                   isDense: true,
                   prefixIcon: Icon(Icons.task_alt_rounded, size: 16),
                   suffixIcon: Icon(Icons.search_rounded, size: 18),
@@ -22217,8 +22217,8 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       return;
     }
 
-    if (taskMode && (minutos == null || minutos < 0 || minutos > 720)) {
-      _showMessage('Ingresa minutos entre 0 y 720.');
+    if (taskMode && (minutos == null || minutos < 0 || minutos > 570)) {
+      _showMessage('Ingresa minutos entre 0 y 570.');
       return;
     }
 
@@ -22294,7 +22294,7 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       _showMessage(
         registro.resumenDiario == null
             ? 'Registro guardado: ${registro.actividadNombre} - ${registro.empleadoNombre}.'
-            : 'Registro guardado. Día: ${registro.resumenDiario!.totalTexto} de ${registro.resumenDiario!.metaTexto}.',
+            : 'Registro guardado. DÃ­a: ${registro.resumenDiario!.totalTexto} de ${registro.resumenDiario!.metaTexto}.',
         isError: false,
       );
     } on ApiException catch (error) {
@@ -22455,9 +22455,9 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       if ((vineta.areaTitulo ?? vineta.area ?? '').trim().isNotEmpty)
         DetailItem('Area', vineta.areaTitulo ?? vineta.area, highlighted: true),
       DetailItem('Producto', vineta.nombre, highlighted: true),
-      DetailItem('Código', vineta.codigoProducto, highlighted: true),
+      DetailItem('CÃ³digo', vineta.codigoProducto, highlighted: true),
       DetailItem('Item', vineta.item, highlighted: true),
-      DetailItem('Presentación', vineta.presentacion, highlighted: true),
+      DetailItem('PresentaciÃ³n', vineta.presentacion, highlighted: true),
       DetailItem('Capa', vineta.capa, highlighted: true),
       DetailItem('Vitola', vineta.vitola, highlighted: true),
       DetailItem('Empaque', vineta.tipoEmpaque, highlighted: true),
@@ -22472,8 +22472,8 @@ class _VinetaDetailPageState extends State<VinetaDetailPage> {
       appBar: AppBar(
         title: Text(
           (vineta.areaTitulo ?? vineta.area ?? '').trim().isEmpty
-              ? 'Informacion de viñeta'
-              : 'Viñeta ${vineta.areaTitulo ?? vineta.area}',
+              ? 'Informacion de viÃ±eta'
+              : 'ViÃ±eta ${vineta.areaTitulo ?? vineta.area}',
         ),
       ),
       body: SafeArea(
@@ -23001,7 +23001,7 @@ class ProductionEntryCard extends StatelessWidget {
                           keyboardType: TextInputType.number,
                           textInputAction: TextInputAction.done,
                           decoration: const InputDecoration(
-                            labelText: 'Minutos viñeta',
+                            labelText: 'Minutos viÃ±eta',
                             hintText: 'Opcional',
                             suffixIcon: Icon(Icons.timer_rounded, size: 18),
                           ),
@@ -23376,7 +23376,7 @@ class AssignedEmployeeLine extends StatelessWidget {
               ),
               const SizedBox(height: 1),
               Text(
-                'Código ${employee.codigo}',
+                'CÃ³digo ${employee.codigo}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -23503,7 +23503,7 @@ class ActivitiesCard extends StatelessWidget {
             if (product != null) ...[
               const SizedBox(height: 2),
               Text(
-                '${product!.codigoProducto ?? product!.item ?? 'Sin codigo'} · ${product!.nombre ?? 'Sin producto'}',
+                '${product!.codigoProducto ?? product!.item ?? 'Sin codigo'} Â· ${product!.nombre ?? 'Sin producto'}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: palette.muted, fontSize: 11),
@@ -23643,26 +23643,6 @@ class ActivityTile extends StatelessWidget {
   }
 }
 
-/// Texto del aviso: descripcion del producto + tipo de empaque + actividad.
-String _textoSinFicha(ActivityInfo activity) {
-  final descripcion = [
-    activity.codigoProducto,
-    activity.productoNombre,
-  ].where((v) => v != null && v.trim().isNotEmpty).map((v) => v!.trim()).join(' · ');
-
-  final empaque = (activity.tipoEmpaque ?? '').trim();
-  final actividad =
-      '${activity.codigoActividad ?? ''} ${activity.nombre ?? ''}'.trim();
-
-  final partes = <String>[
-    if (descripcion.isNotEmpty) descripcion,
-    if (empaque.isNotEmpty) 'Empaque $empaque',
-    'Actividad $actividad',
-  ];
-
-  return 'Sin ficha de empaque: ${partes.join(' · ')}';
-}
-
 class SelectedActivitySummary extends StatelessWidget {
   const SelectedActivitySummary({
     required this.activity,
@@ -23680,7 +23660,7 @@ class SelectedActivitySummary extends StatelessWidget {
     final meta = [
       activity.compactMeta,
       activity.productMeta,
-    ].where((value) => value.isNotEmpty).join(' · ');
+    ].where((value) => value.isNotEmpty).join(' Â· ');
 
     return InkWell(
       onTap: onTap,
@@ -24019,7 +23999,7 @@ class DetailGrid extends StatelessWidget {
                     ),
                     const SizedBox(width: 7),
                     Text(
-                      'Datos de la viñeta',
+                      'Datos de la viÃ±eta',
                       style: TextStyle(
                         color: palette.text,
                         fontSize: 13,
@@ -24177,9 +24157,9 @@ class DetailTile extends StatelessWidget {
   IconData _iconForLabel(String label) {
     return switch (label) {
       'Producto' => Icons.inventory_2_rounded,
-      'Código' => Icons.qr_code_2_rounded,
+      'CÃ³digo' => Icons.qr_code_2_rounded,
       'Item' => Icons.sell_rounded,
-      'Presentación' => Icons.category_rounded,
+      'PresentaciÃ³n' => Icons.category_rounded,
       'Capa' => Icons.layers_rounded,
       'Vitola' => Icons.straighten_rounded,
       'Empaque' => Icons.archive_rounded,
@@ -24345,7 +24325,7 @@ class AuthApi {
       throw lastApiError;
     }
 
-    throw lastError ?? const ApiException('No se pudo consultar la viñeta.');
+    throw lastError ?? const ApiException('No se pudo consultar la viÃ±eta.');
   }
 
   Future<VinetaActivitiesResult> vinetaActivities(
@@ -24860,8 +24840,8 @@ class AuthApi {
     return ApplyHoursErpResult.fromJson(body);
   }
 
-  /// Aplica horas y puros al ERP buscando al empleado por código
-  /// (para aplicar por marca desde "Viñetas del empleado").
+  /// Aplica horas y puros al ERP buscando al empleado por cÃ³digo
+  /// (para aplicar por marca desde "ViÃ±etas del empleado").
   Future<ApplyHoursErpResult> applyHoursToErpByCode(
     String token, {
     required String empleadoCodigo,
@@ -24901,7 +24881,7 @@ class AuthApi {
     return ApplyHoursErpResult.fromJson(body);
   }
 
-  /// Aplica horas y puros al ERP para TODAS las viñetas de un documento.
+  /// Aplica horas y puros al ERP para TODAS las viÃ±etas de un documento.
   Future<ApplyHoursErpResult> applyDocumentHoursToErp(
     String token, {
     required String documento,
@@ -25104,7 +25084,7 @@ class AuthApi {
       }
 
       throw const ApiException(
-        'Tu sesión expiró. Inicia sesión nuevamente.',
+        'Tu sesiÃ³n expirÃ³. Inicia sesiÃ³n nuevamente.',
         statusCode: 401,
       );
     }
@@ -25402,7 +25382,7 @@ class ActivityInfo {
   VinetaProcessGroup? get processGroup {
     // Prensado (codigo 1) y Rolado Empaque (codigo 171) son grupos especiales:
     // no forman parte del proceso rezago -> anillado -> llenado, asi que no se
-    // validan contra los pasos ya registrados de la viñeta.
+    // validan contra los pasos ya registrados de la viÃ±eta.
     final codigoExacto = codigoActividad?.trim() ?? '';
 
     if (codigoExacto == '1' || codigoExacto == '171') {
@@ -25442,7 +25422,7 @@ class ActivityInfo {
     return [
       codigoActividad,
       tipoEmpaque,
-    ].where((value) => value != null && value.isNotEmpty).join(' · ');
+    ].where((value) => value != null && value.isNotEmpty).join(' Â· ');
   }
 
   String get productMeta => productMetaText();
@@ -25470,7 +25450,7 @@ class ActivityInfo {
       }
     }
 
-    return parts.join(' · ');
+    return parts.join(' Â· ');
   }
 
   String get selectionKey {
@@ -25569,7 +25549,7 @@ class EmployeeSeguimientoResult {
       return 'Seguimiento global';
     }
 
-    return '$scopeLabel · ${employee?.nombre ?? 'Empleado'}';
+    return '$scopeLabel Â· ${employee?.nombre ?? 'Empleado'}';
   }
 
   factory EmployeeSeguimientoResult.fromJson(Map<String, dynamic> json) {
@@ -26054,7 +26034,7 @@ class DailyVinetaRegistroInfo {
       return cod;
     }
 
-    return vinetaId == null ? 'Viñeta' : 'Viñeta $vinetaId';
+    return vinetaId == null ? 'ViÃ±eta' : 'ViÃ±eta $vinetaId';
   }
 
   String get productTitle {
@@ -26066,13 +26046,13 @@ class DailyVinetaRegistroInfo {
       return title;
     }
 
-    return 'Item $item · $title';
+    return 'Item $item Â· $title';
   }
 
   String get productMeta {
     final fecha = vinetaFecha == null
         ? null
-        : 'Fecha viñeta ${formatApiDateDisplay(vinetaFecha)}';
+        : 'Fecha viÃ±eta ${formatApiDateDisplay(vinetaFecha)}';
 
     final meta = _joinRecordParts([
       producto.codigoProducto,
@@ -26376,13 +26356,13 @@ class DailyWorkSummaryInfo {
 
   factory DailyWorkSummaryInfo.fromJson(Map<String, dynamic> json) {
     return DailyWorkSummaryInfo(
-      metaMinutos: _nullableInt(json['meta_minutos']) ?? 720,
-      metaTexto: _nullableString(json['meta_texto']) ?? '12 h',
+      metaMinutos: _nullableInt(json['meta_minutos']) ?? 570,
+      metaTexto: _nullableString(json['meta_texto']) ?? '9 h 30',
       totalActividades: _nullableInt(json['total_actividades']) ?? 0,
       totalMinutos: _nullableInt(json['total_minutos']) ?? 0,
       totalTexto: _nullableString(json['total_texto']) ?? '0 min',
-      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 720,
-      faltanteTexto: _nullableString(json['faltante_texto']) ?? '12 h',
+      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 570,
+      faltanteTexto: _nullableString(json['faltante_texto']) ?? '9 h 30',
       completado: json['completado'] as bool? ?? false,
       porcentaje: _nullableDouble(json['porcentaje']) ?? 0,
     );
@@ -26609,8 +26589,8 @@ class EmployeeHoursSummaryInfo {
 
   factory EmployeeHoursSummaryInfo.empty() {
     return const EmployeeHoursSummaryInfo(
-      metaMinutos: 720,
-      metaTexto: '12 h',
+      metaMinutos: 570,
+      metaTexto: '9 h 30',
       totalVinetas: 0,
       totalPuros: 0,
       totalActividades: 0,
@@ -26622,8 +26602,8 @@ class EmployeeHoursSummaryInfo {
       tiempoOrdinarioTexto: '0 min',
       totalMinutos: 0,
       totalTexto: '0 min',
-      faltanteMinutos: 720,
-      faltanteTexto: '12 h',
+      faltanteMinutos: 570,
+      faltanteTexto: '9 h 30',
       completado: false,
       porcentaje: 0,
     );
@@ -26631,8 +26611,8 @@ class EmployeeHoursSummaryInfo {
 
   factory EmployeeHoursSummaryInfo.fromJson(Map<String, dynamic> json) {
     return EmployeeHoursSummaryInfo(
-      metaMinutos: _nullableInt(json['meta_minutos']) ?? 720,
-      metaTexto: _nullableString(json['meta_texto']) ?? '12 h',
+      metaMinutos: _nullableInt(json['meta_minutos']) ?? 570,
+      metaTexto: _nullableString(json['meta_texto']) ?? '9 h 30',
       totalVinetas: _nullableInt(json['total_vinetas']) ?? 0,
       totalPuros: _nullableInt(json['total_puros']) ?? 0,
       totalActividades: _nullableInt(json['total_actividades']) ?? 0,
@@ -26652,8 +26632,8 @@ class EmployeeHoursSummaryInfo {
           _nullableString(json['tiempo_ordinario_texto']) ?? '0 min',
       totalMinutos: _nullableInt(json['total_minutos']) ?? 0,
       totalTexto: _nullableString(json['total_texto']) ?? '0 min',
-      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 720,
-      faltanteTexto: _nullableString(json['faltante_texto']) ?? '12 h',
+      faltanteMinutos: _nullableInt(json['faltante_minutos']) ?? 570,
+      faltanteTexto: _nullableString(json['faltante_texto']) ?? '9 h 30',
       completado: json['completado'] as bool? ?? false,
       porcentaje: _nullableDouble(json['porcentaje']) ?? 0,
     );
@@ -26793,7 +26773,7 @@ class ApplyHoursErpResult {
           final horas = item['horas'];
           final puros = item['puros'];
           detalle.add(
-            '$doc ${horas ?? ''} h · ${puros ?? 0} puros: $estado'
+            '$doc ${horas ?? ''} h Â· ${puros ?? 0} puros: $estado'
             '${mensaje.isEmpty ? '' : ' - $mensaje'}',
           );
         }
@@ -26917,7 +26897,7 @@ String _joinRecordParts(Iterable<String?> values) {
     }
   }
 
-  return parts.join(' · ');
+  return parts.join(' Â· ');
 }
 
 DateTime? _parseApiDate(String? value) {
@@ -27258,7 +27238,7 @@ class VinetaInfo {
   final String? escaneadoEn;
   final String? escaneadoEnTexto;
 
-  /// 'LIMPIEZA' / 'BROCHA' cuando la viñeta se genero dentro de Empaque.
+  /// 'LIMPIEZA' / 'BROCHA' cuando la viÃ±eta se genero dentro de Empaque.
   final String? area;
   final String? areaTitulo;
 
